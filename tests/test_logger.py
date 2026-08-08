@@ -1,10 +1,21 @@
 import logging
-from pathlib import Path
+
+import pytest
 
 def _fresh(monkeypatch):
     import src.logger as L
     monkeypatch.setattr(L, "_configured", False)
     return L
+
+@pytest.fixture(autouse=True)
+def _cleanup_log_handlers():
+    root = logging.getLogger()
+    before = set(root.handlers)
+    yield
+    for h in list(root.handlers):
+        if h not in before:
+            root.removeHandler(h)
+            h.close()
 
 def test_logger_writes_to_file(tmp_path, monkeypatch):
     L = _fresh(monkeypatch)
