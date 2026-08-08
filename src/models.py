@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 
 NO_MATCH_ERROR = "无匹配日志"
 
+# Pod 内日志目录默认值（页面②采集的远端来源目录，可被「日志目录」输入框覆盖）
+DEFAULT_LOG_DIR = "/opt/logs"
+
 
 @dataclass
 class HostConfig:
@@ -49,6 +52,7 @@ class CollectTask:
     deploy_name: str
     namespace: str
     pattern: str
+    log_dir: str = DEFAULT_LOG_DIR
 
 
 @dataclass

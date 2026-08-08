@@ -1,15 +1,21 @@
 """kubectl 命令封装：命名空间、Pod 元数据、tar 流式拉日志。"""
 import json
+import re
 import tarfile
 from pathlib import Path
 
-from .models import PodMeta
+from .models import DEFAULT_LOG_DIR, PodMeta
 
 PATTERN_MAP = {
     "ALL": "*.log",
     "hycommon": "hycommon*.log",
     "hyframework": "hyframework*.log",
 }
+
+
+def _sanitize_shell_word(value: str) -> str:
+    """只保留路径/文件名的安全字符，防日志目录/日志名注入远端 sh -c 命令。"""
+    return re.sub(r"[^A-Za-z0-9._/-]", "", value)
 
 
 def list_namespaces(client) -> list[str]:
@@ -55,8 +61,23 @@ def get_pods_meta(client, namespace: str) -> list[PodMeta]:
     return parse_pods_json(out)
 
 
-def build_tar_command(namespace: str, pod: str, pattern: str) -> str:
-    return f"kubectl exec -n {namespace} {pod} -- sh -c 'cd /opt/logs && tar czf - {pattern}'"
+def build_log_pattern(category: str, name_filter: str = "") -> str:
+    """日志类别 + 可选日志名 → 远端 tar 通配符。
+
+    日志名非空时匹配「包含该名的 .log」（*<名>*.log）；否则用类别预置模式。
+    日志名仅保留安全字符，避免被远端 sh 解释成命令/管道。
+    """
+    name = _sanitize_shell_word(name_filter).strip()
+    if name:
+        return f"*{name}*.log"
+    return PATTERN_MAP.get(category, PATTERN_MAP["ALL"])
+
+
+def build_tar_command(namespace: str, pod: str, pattern: str,
+                      log_dir: str = DEFAULT_LOG_DIR) -> str:
+    safe_dir = _sanitize_shell_word(log_dir).strip() or DEFAULT_LOG_DIR
+    return (f"kubectl exec -n {namespace} {pod} -- "
+            f"sh -c 'cd {safe_dir} && tar czf - {pattern}'")
 
 
 def count_tar_files(tar_path: Path) -> int:
@@ -64,9 +85,10 @@ def count_tar_files(tar_path: Path) -> int:
         return sum(1 for m in tf.getmembers() if m.isreg())
 
 
-def collect_pod_tar(client, namespace: str, pod: str, pattern: str, target_path: Path) -> int:
+def collect_pod_tar(client, namespace: str, pod: str, pattern: str,
+                    target_path: Path, log_dir: str = DEFAULT_LOG_DIR) -> int:
     """流式下载 Pod 日志 tar 到 target_path，返回日志文件数。失败抛 RuntimeError。"""
-    cmd = build_tar_command(namespace, pod, pattern)
+    cmd = build_tar_command(namespace, pod, pattern, log_dir)
     code = client.stream_to_file(cmd, target_path)
     if code != 0:
         target_path.unlink(missing_ok=True)  # 清理失败残留的半成品 tar

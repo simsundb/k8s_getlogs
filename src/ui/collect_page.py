@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
 
 from ..collector import Collector, write_manifest, zip_output
 from ..config import load_config, save_config
-from ..k8s_client import PATTERN_MAP, get_pods_meta
-from ..models import CollectSummary, CollectTask, human_size
+from ..k8s_client import PATTERN_MAP, build_log_pattern, get_pods_meta
+from ..models import DEFAULT_LOG_DIR, CollectSummary, CollectTask, human_size
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
 from .log_panel import LogPanel
@@ -96,6 +96,7 @@ class CollectPage(QWidget):
         super().__init__(parent)
         self._worker = None
         self.metas = []
+        cfg = load_config()
 
         root = QVBoxLayout(self)
         self.selector = HostNamespaceSelector(hosts_provider, self)
@@ -108,6 +109,22 @@ class CollectPage(QWidget):
         self.choose_btn = QPushButton("选择存储目录")
         out_row.addWidget(self.choose_btn)
         root.addLayout(out_row)
+
+        src_row = QHBoxLayout()
+        src_row.addWidget(QLabel("日志目录:"))
+        self.log_dir_edit = QLineEdit()
+        self.log_dir_edit.setText(cfg.get("log_dir") or DEFAULT_LOG_DIR)
+        self.log_dir_edit.setPlaceholderText("Pod 内日志目录，留空默认 /opt/logs")
+        self.log_dir_edit.setMinimumWidth(220)
+        src_row.addWidget(self.log_dir_edit)
+        src_row.addSpacing(16)
+        src_row.addWidget(QLabel("日志名:"))
+        self.log_name_edit = QLineEdit()
+        self.log_name_edit.setPlaceholderText("非空时匹配包含该名的 .log")
+        self.log_name_edit.setMinimumWidth(180)
+        src_row.addWidget(self.log_name_edit)
+        src_row.addStretch(1)
+        root.addLayout(src_row)
 
         pod_group = QGroupBox("Pod 选择")
         pod_layout = QVBoxLayout(pod_group)
@@ -169,7 +186,6 @@ class CollectPage(QWidget):
         self.deselect_all_btn.clicked.connect(self._on_deselect_all)
         self.pod_list.itemChanged.connect(self._on_pod_item_changed)
 
-        cfg = load_config()
         self.out_dir = Path(cfg.get("output_dir") or str(Path.cwd() / "output"))
         self._update_out_label()
 
@@ -278,6 +294,21 @@ class CollectPage(QWidget):
                 if not self.pod_list.item(i).isHidden()
                 and self.pod_list.item(i).checkState() == Qt.Checked]
 
+    def _source_settings(self) -> tuple[str, str]:
+        """采集来源：日志目录（留空默认 /opt/logs）+ 远端 tar 通配符。"""
+        log_dir = self.log_dir_edit.text().strip() or DEFAULT_LOG_DIR
+        pattern = build_log_pattern(self.cat_combo.currentText(),
+                                    self.log_name_edit.text().strip())
+        return log_dir, pattern
+
+    def _build_tasks(self, ns: str, pod_names: list[str]) -> list[CollectTask]:
+        """按当前页面设置构建采集任务（类别/日志目录/日志名）。"""
+        log_dir, pattern = self._source_settings()
+        by_name = {pm.name: pm for pm in self.metas}
+        return [CollectTask(pod_name=n, deploy_name=by_name[n].deploy_name,
+                            namespace=ns, pattern=pattern, log_dir=log_dir)
+                for n in pod_names]
+
     def start_collect(self):
         ns = self.selector.ns_combo.currentText()
         if not ns or not self.metas:
@@ -292,10 +323,13 @@ class CollectPage(QWidget):
             self._on_error("未选择主机")
             return
         category = self.cat_combo.currentText()
-        pattern = PATTERN_MAP[category]
-        by_name = {pm.name: pm for pm in self.metas}
-        tasks = [CollectTask(pod_name=n, deploy_name=by_name[n].deploy_name,
-                             namespace=ns, pattern=pattern) for n in pod_names]
+        tasks = self._build_tasks(ns, pod_names)
+        log_dir, _pattern = self._source_settings()
+        # 记住日志目录设置，下次打开沿用（日志名属临时过滤，不持久化）
+        data = load_config()
+        if data.get("log_dir") != log_dir:
+            data["log_dir"] = log_dir
+            save_config(data)
         # 快照采集开始时刻的日期，应用跨午夜时避免落到昨天的目录
         self._date = datetime.datetime.now().strftime("%Y-%m-%d")
         date_dir = self.out_dir / self._date
@@ -305,8 +339,10 @@ class CollectPage(QWidget):
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.log_panel.clear_log()
+        name = self.log_name_edit.text().strip() or "全部"
         self.log_panel.append_log(
-            f"开始采集：{len(tasks)} 个 Pod，类别={category}，存储={self.out_dir}")
+            f"开始采集：{len(tasks)} 个 Pod，类别={category}，"
+            f"日志目录={log_dir}，日志名={name}，存储={self.out_dir}")
 
         # 快照主机/命名空间/类别，采集过程中用户切换界面选择不影响本批任务：
         # 工厂由线程池调用，绝不能跨线程访问 Qt 控件，故闭包只捕获 HostConfig 快照。

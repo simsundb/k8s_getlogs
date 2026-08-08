@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from src.models import PodMeta
+from src.models import DEFAULT_LOG_DIR, PodMeta
 from src.ui.style import SELECT_BG
 
 
@@ -144,5 +144,36 @@ def test_checked_item_gets_background_color(app, monkeypatch, tmp_path):
         assert item.background().color().name().lower() == SELECT_BG.lower()
         item.setCheckState(Qt.Unchecked)
         assert item.background().style() == Qt.BrushStyle.NoBrush  # 无背景
+    finally:
+        page.deleteLater()
+
+
+def test_page_default_log_settings(app, monkeypatch, tmp_path):
+    """日志目录默认当前目录(/opt/logs)，日志名默认空。"""
+    page = _build_page(app, monkeypatch, tmp_path, [])
+    try:
+        assert page.log_dir_edit.text() == DEFAULT_LOG_DIR
+        assert page.log_name_edit.text() == ""
+    finally:
+        page.deleteLater()
+
+
+def test_page_build_tasks_uses_log_settings(app, monkeypatch, tmp_path):
+    """日志名非空 → 匹配包含该名的 .log；空 → 回落类别模式；目录随输入。"""
+    metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+             PodMeta(name="web-0", namespace="ns", deploy_name="web")]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
+        page.log_dir_edit.setText("/data/logs")
+        page.log_name_edit.setText("err")
+        page.cat_combo.setCurrentText("hycommon")
+        tasks = page._build_tasks("ns", ["ppl2-a"])
+        assert tasks[0].log_dir == "/data/logs"
+        assert tasks[0].pattern == "*err*.log"           # 日志名覆盖类别模式
+
+        page.log_name_edit.setText("")
+        tasks = page._build_tasks("ns", ["web-0"])
+        assert tasks[0].pattern == "hycommon*.log"       # 空名回落类别模式
+        assert tasks[0].log_dir == "/data/logs"
     finally:
         page.deleteLater()

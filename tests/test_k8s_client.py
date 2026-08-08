@@ -6,9 +6,9 @@ import pytest
 
 from pathlib import Path
 
-from src.k8s_client import (PATTERN_MAP, build_tar_command, collect_pod_tar,
-                            count_tar_files, get_pods_meta, list_namespaces,
-                            parse_pods_json)
+from src.k8s_client import (PATTERN_MAP, build_log_pattern, build_tar_command,
+                            collect_pod_tar, count_tar_files, get_pods_meta,
+                            list_namespaces, parse_pods_json)
 
 
 class _FakeClient:
@@ -100,6 +100,33 @@ def test_build_tar_command():
     assert "hycommon*.log" in cmd
 
 
+def test_build_tar_command_custom_log_dir():
+    cmd = build_tar_command("ns1", "pod1", "*.log", log_dir="/data/logs")
+    assert "cd /data/logs" in cmd
+
+
+def test_build_tar_command_sanitizes_log_dir():
+    """日志目录不允许携带 shell 元字符，防注入远端 sh -c 命令。"""
+    cmd = build_tar_command("ns1", "pod1", "*.log", log_dir="/logs; rm -rf /")
+    assert ";" not in cmd
+
+
+def test_build_log_pattern_empty_name_uses_category():
+    assert build_log_pattern("ALL", "") == "*.log"
+    assert build_log_pattern("hycommon", "") == "hycommon*.log"
+    assert build_log_pattern("hyframework", "") == "hyframework*.log"
+
+
+def test_build_log_pattern_name_matches_containing_log():
+    assert build_log_pattern("ALL", "err") == "*err*.log"
+    assert build_log_pattern("hycommon", "nginx") == "*nginx*.log"
+
+
+def test_build_log_pattern_strips_shell_metachars():
+    """日志名只保留安全字符，避免被远端 sh 解释成命令/管道。"""
+    assert build_log_pattern("ALL", "a;b'c ") == "*abc*.log"
+
+
 def test_count_tar_files(tmp_path):
     p = tmp_path / "t.tgz"
     with tarfile.open(p, "w:gz") as tf:
@@ -148,6 +175,15 @@ def test_collect_pod_tar_success_returns_count(tmp_path):
     assert n == 2
     assert target.exists()
     assert "kubectl exec -n ns1 pod1" in c.stream_cmd
+
+
+def test_collect_pod_tar_uses_log_dir(tmp_path):
+    c = _FakeStreamClient((0, "", ""), stream_result=0,
+                          payload=_make_tar_bytes(["a.log"]))
+    target = tmp_path / "logs.tgz"
+    collect_pod_tar(c, "ns1", "pod1", "*.log", target, log_dir="/data/logs")
+    assert target.exists()
+    assert "cd /data/logs" in c.stream_cmd
 
 
 def test_collect_pod_tar_failure_removes_partial_and_raises(tmp_path):

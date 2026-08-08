@@ -111,7 +111,8 @@ class Collector:
                     target_dir.mkdir(parents=True, exist_ok=True)
                     tar_path = target_dir / "_tmp.tar.gz"
                     count = collect_pod_tar(
-                        client, task.namespace, task.pod_name, task.pattern, tar_path
+                        client, task.namespace, task.pod_name, task.pattern,
+                        tar_path, log_dir=task.log_dir,
                     )
                     if count == 0:
                         result = CollectResult(

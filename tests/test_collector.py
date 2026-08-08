@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Event
 
 from src.collector import Collector, extract_tar, write_manifest, zip_output
-from src.models import CollectResult, CollectTask, PodMeta
+from src.models import DEFAULT_LOG_DIR, CollectResult, CollectTask, PodMeta
 
 
 class _FakeSSH:
@@ -15,6 +15,25 @@ class _FakeSSH:
         self.source_dir = source_dir
 
     def stream_to_file(self, command, filepath, timeout=600):
+        with tarfile.open(filepath, "w:gz") as tf:
+            for p in sorted(self.source_dir.rglob("*")):
+                if p.is_file():
+                    tf.add(p, arcname=p.relative_to(self.source_dir))
+        return 0
+
+    def close(self):
+        pass
+
+
+class _RecordingSSH:
+    """记录远端 tar 命令并输出真实 tar，用于断言 log_dir 被传入。"""
+
+    def __init__(self, source_dir: Path):
+        self.source_dir = source_dir
+        self.last_cmd = ""
+
+    def stream_to_file(self, command, filepath, timeout=600):
+        self.last_cmd = command
         with tarfile.open(filepath, "w:gz") as tf:
             for p in sorted(self.source_dir.rglob("*")):
                 if p.is_file():
@@ -47,6 +66,21 @@ def _make_source(root: Path, files: dict) -> Path:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
     return src
+
+
+def test_collect_task_default_log_dir():
+    assert CollectTask("p", "d", "ns", "*.log").log_dir == DEFAULT_LOG_DIR
+
+
+def test_collector_uses_task_log_dir(tmp_path):
+    src = _make_source(tmp_path, {"a.log": "x"})
+    fake = _RecordingSSH(src)
+    collector = Collector(lambda: fake, tmp_path / "output", max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns",
+                       pattern="*.log", log_dir="/data/logs")
+    results = collector.run([task], cancel=Event())
+    assert results[0].ok is True
+    assert "cd /data/logs" in fake.last_cmd
 
 
 def test_extract_tar(tmp_path):
