@@ -1,16 +1,14 @@
+import html as _html
 import json
 from collections import Counter
 
-from PySide6.QtCharts import (QBarCategoryAxis, QBarSet, QChart, QChartView,
-                              QHorizontalBarSeries, QValueAxis)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
-                               QDialogButtonBox, QGroupBox, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QSplitter, QTableWidget,
-                               QTableWidgetItem, QTextEdit, QVBoxLayout,
-                               QWidget)
+                               QDialogButtonBox, QFileDialog, QGroupBox,
+                               QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                               QPlainTextEdit, QPushButton, QSplitter,
+                               QTableWidget, QTableWidgetItem, QTextEdit,
+                               QVBoxLayout, QWidget)
 
 from ..k8s_client import get_pods_meta
 from ..models import PodMeta
@@ -85,6 +83,39 @@ def _describe_meta(pm: PodMeta) -> str:
     return "\n".join(lines)
 
 
+def export_table_html(headers: list[str], rows: list[list[str]], path) -> str:
+    """把查询结果表格导出为独立 HTML（UTF-8，带样式），返回文件路径。"""
+    thead = "".join(f"<th>{_html.escape(str(h))}</th>" for h in headers)
+    trows = ["<tr>" + "".join(f"<td>{_html.escape(str(v))}</td>" for v in row)
+             + "</tr>" for row in rows]
+    doc = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>查询统计结果</title>
+<style>
+  body {{ font-family:"Microsoft YaHei","PingFang SC",sans-serif; background:#f3f5f9; margin:20px; color:#2b3240; }}
+  h1 {{ font-size:20px; }}
+  .summary {{ color:#6a7380; margin-bottom:14px; }}
+  table {{ border-collapse:collapse; width:100%; background:#fff; }}
+  th,td {{ border:1px solid #d8dce4; padding:6px 10px; font-size:13px; text-align:left; }}
+  th {{ background:#3b6fc4; color:#fff; }}
+  tr:nth-child(even) {{ background:#f5f7fb; }}
+</style>
+</head>
+<body>
+  <h1>查询统计结果</h1>
+  <div class="summary">共 {len(rows)} 行</div>
+  <table><thead><tr>{thead}</tr></thead><tbody>{''.join(trows)}</tbody></table>
+</body>
+</html>
+"""
+    path = str(path)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(doc)
+    return path
+
+
 class AnalyzePage(QWidget):
     def __init__(self, hosts_provider, parent=None):
         super().__init__(parent)
@@ -94,11 +125,11 @@ class AnalyzePage(QWidget):
         self.selector = HostNamespaceSelector(hosts_provider, self)
         root.addWidget(self.selector)
 
-        # 条件过滤：固定 3 个条件行（字段/操作/值），够用且简单
+        # 条件过滤：固定 2 个条件行（字段/操作/值），多条件 AND
         cond_group = QGroupBox("条件过滤（多条件 AND）")
         cond_layout = QVBoxLayout(cond_group)
         self.cond_rows = []
-        for _ in range(3):
+        for _ in range(2):
             row = QHBoxLayout()
             field = QComboBox()
             field.addItems(FILTER_FIELDS)
@@ -120,7 +151,7 @@ class AnalyzePage(QWidget):
         cond_layout.addLayout(btn_row)
         root.addWidget(cond_group)
 
-        # 分组统计
+        # 分组统计（文本结果；图形已按需求移除，表格获得更大展示区）
         grp_row = QHBoxLayout()
         grp_row.addWidget(QLabel("分组字段:"))
         self.group_combo = QComboBox()
@@ -135,14 +166,7 @@ class AnalyzePage(QWidget):
         grp_row.addWidget(self.group_result, 1)
         root.addLayout(grp_row)
 
-        # 分组统计图形（QtCharts 横向条形图，点「统计」后展示）
-        self.chart_view = QChartView()
-        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.chart_view.setMinimumHeight(200)
-        self.chart_view.setVisible(False)
-        root.addWidget(self.chart_view)
-
-        # 关键字搜索
+        # 关键字搜索 + 导出
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("关键字搜索:"))
         self.search_edit = QLineEdit()
@@ -152,29 +176,31 @@ class AnalyzePage(QWidget):
         search_row.addWidget(self.search_edit, 1)
         self.search_btn = QPushButton("搜索")
         search_row.addWidget(self.search_btn)
+        self.export_html_btn = QPushButton("导出 HTML")
+        search_row.addWidget(self.export_html_btn)
         root.addLayout(search_row)
 
-        # 结果表格
+        # 结果表格（Pod 明细）：占据剩余高度，是页面上最大的框
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             ["deployName", "pod", "project", "node", "image", "podIP", "restartCount", "startTime"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        # 单元格内容超宽时不折行、自动出横向滚动条；行数超出时纵向滚动条自动出现
         self.table.setWordWrap(False)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setMinimumHeight(260)          # Pod 明细区尽量大
         self.table.itemDoubleClicked.connect(self._show_detail)
         root.addWidget(self.table, 1)
 
-        # 命名空间下拉切换/加载时重载 Pod 元数据（与采集页一致，避免表格停留在旧命名空间）
         self.selector.ns_combo.currentIndexChanged.connect(lambda _i: self._load_pods())
         self.selector.connectionFailed.connect(self._on_connection_failed)
         self.query_btn.clicked.connect(self._apply_query)
         self.clear_btn.clicked.connect(self._clear_conditions)
         self.group_btn.clicked.connect(self._group_stats)
         self.search_btn.clicked.connect(self._apply_query)
+        self.export_html_btn.clicked.connect(self._export_html)
 
     def _load_pods(self):
         ns = self.selector.ns_combo.currentText()
@@ -193,8 +219,6 @@ class AnalyzePage(QWidget):
         self.metas = []
         self.table.setRowCount(0)
         self.group_result.setText("")
-        self.chart_view.setChart(None)
-        self.chart_view.setVisible(False)
 
     def _on_connection_failed(self, _message):
         self._clear_data()
@@ -241,40 +265,26 @@ class AnalyzePage(QWidget):
         counter = Counter(_field_value(pm, field) or "(空)" for pm in self.metas)
         top = counter.most_common(8)
         self.group_result.setText("  ".join(f"{k}: {n}" for k, n in top))
-        self._render_group_chart(top, field)
 
-    def _render_group_chart(self, counts, field):
-        """把分组计数画成横向条形图；counts 为空时隐藏图表区。"""
-        if not counts:
-            self.chart_view.setChart(None)
-            self.chart_view.setVisible(False)
+    def _export_html(self):
+        if self.table.rowCount() == 0:
+            self.group_result.setText("没有可导出的结果")
             return
-        series = QHorizontalBarSeries()
-        barset = QBarSet("数量")
-        barset.setColor(QColor("#3b6fc4"))
-        for _name, n in counts:
-            barset.append(n)
-        series.append(barset)
-
-        chart = QChart()
-        chart.setTitle(f"{field} 分组分布（Top {len(counts)}）")
-        chart.addSeries(series)
-
-        axis_y = QBarCategoryAxis()
-        axis_y.append([name for name, _n in counts])
-        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
-
-        axis_x = QValueAxis()
-        axis_x.setLabelFormat("%d")
-        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
-
-        chart.legend().setVisible(False)
-        chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
-        chart.setBackgroundBrush(QBrush(QColor("#ffffff")))
-        self.chart_view.setChart(chart)
-        self.chart_view.setVisible(True)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 HTML", "query_result.html", "HTML 文件 (*.html)")
+        if not path:
+            return
+        headers = [self.table.horizontalHeaderItem(c).text()
+                   for c in range(self.table.columnCount())]
+        rows = [[self.table.item(r, c).text() if self.table.item(r, c) else ""
+                 for c in range(self.table.columnCount())]
+                for r in range(self.table.rowCount())]
+        try:
+            export_table_html(headers, rows, path)
+        except Exception as e:
+            self.group_result.setText(f"导出 HTML 失败: {e}")
+            return
+        self.group_result.setText(f"已导出 {len(rows)} 行 → {path}")
 
     def _show_detail(self, item):
         pm = item.data(Qt.UserRole)

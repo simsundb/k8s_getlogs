@@ -90,3 +90,45 @@ def test_ops_page_export_state_toggles(app, monkeypatch, tmp_path):
         assert page.log_panel.toPlainText() == ""
     finally:
         page.deleteLater()
+
+
+def test_ops_page_disabled_command_not_in_dropdown(app, monkeypatch, tmp_path):
+    """停用的运维项不出现在下拉中（不生效）。"""
+    from src.ops import OpsCommand
+    page = _build_page(monkeypatch, tmp_path)
+    try:
+        page.commands = [
+            OpsCommand("停用项", "集群", "d", "kubectl cluster-info", False, False),
+            OpsCommand("启用项", "集群", "d", "kubectl cluster-info", False, True),
+        ]
+        page._refresh_categories()
+        page._reload_cmds()
+        texts = "|".join(page.cmd_combo.itemText(i)
+                         for i in range(page.cmd_combo.count()))
+        assert "停用项" not in texts
+        assert "启用项" in texts
+        # 类别下拉只含启用命令的类别
+        cats = [page.cat_combo.itemText(i) for i in range(page.cat_combo.count())]
+        assert cats == ["全部", "集群"]
+    finally:
+        page.deleteLater()
+
+
+def test_ops_page_loads_saved_commands(monkeypatch, tmp_path):
+    """config.json 保存过运维项 → 页面加载保存清单而非出厂预置。"""
+    import json
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"ops_commands": [
+        {"label": "自定义A", "category": "自定义", "description": "d",
+         "command": "echo 1", "needs_namespace": False, "active": True},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    from src.ui.ops_page import OpsPage
+    page = OpsPage(lambda: [])
+    try:
+        assert [c.label for c in page.commands] == ["自定义A"]
+        assert page.cmd_combo.count() == 1
+        assert page.cmd_combo.itemText(0) == "[自定义] 自定义A"
+    finally:
+        page.deleteLater()

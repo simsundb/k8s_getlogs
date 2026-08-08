@@ -1,9 +1,10 @@
 # tests/test_ops.py
-"""第④页 SSH 运维：预置命令、命令构建、表格解析、HTML/Excel 导出。"""
+"""第④页 SSH 运维：预置命令、命令构建、表格解析、HTML/Excel 导出、运维项持久化。"""
 from openpyxl import load_workbook
 
-from src.ops import (OPS_COMMANDS, OpsResult, build_command, export_excel,
-                     export_html, parse_table_output)
+from src.ops import (OPS_COMMANDS, OpsCommand, OpsResult, build_command,
+                     export_excel, export_html, load_ops_commands,
+                     parse_table_output, save_ops_commands)
 
 
 # ---------- 预置命令 ----------
@@ -101,3 +102,45 @@ def test_export_excel_writes_summary_and_per_result_sheets(tmp_path):
     assert detail["A9"].value == "NAME"
     assert detail["B9"].value == "STATUS"
     assert detail["A10"].value == "node-1"
+
+
+# ---------- 运维项持久化（config.json ops_commands） ----------
+def test_load_ops_commands_defaults_when_missing():
+    """未保存过（首次运行）→ 返回出厂预置，且全部启用。"""
+    cmds = load_ops_commands({})
+    assert len(cmds) == len(OPS_COMMANDS)
+    assert all(c.active for c in cmds)
+
+
+def test_load_ops_commands_empty_list_falls_back_to_defaults():
+    assert len(load_ops_commands({"ops_commands": []})) == len(OPS_COMMANDS)
+
+
+def test_save_and_load_roundtrip(monkeypatch, tmp_path):
+    """保存的新增/停用项能完整读回。"""
+    from src import config
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+
+    cmds = [OpsCommand("磁盘占用", "节点", "Master 磁盘", "df -h", False, True),
+            OpsCommand("自定义检查", "自定义", "检查服务", "echo ok", False, False)]
+    config.save_config(config.load_config() | save_ops_commands({}, cmds))
+    loaded = load_ops_commands(config.load_config())
+    assert [c.label for c in loaded] == ["磁盘占用", "自定义检查"]
+    assert loaded[0].active is True
+    assert loaded[1].active is False
+    assert loaded[1].category == "自定义"
+
+
+def test_load_ops_commands_skips_bad_entries(monkeypatch, tmp_path):
+    """非法条目（缺 label）被跳过，合法条目保留。"""
+    from src import config
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    config.save_config(config.load_config() | {"ops_commands": [
+        {"label": "", "command": "echo 1"},                          # 非法：无名称
+        {"label": "合法项", "category": "存储", "description": "d",
+         "command": "kubectl get pv", "needs_namespace": False, "active": True},
+    ]})
+    loaded = load_ops_commands(config.load_config())
+    assert [c.label for c in loaded] == ["合法项"]

@@ -1,13 +1,13 @@
-# tests/test_analyze_chart.py
-"""③ 页分组统计图形 + 关键字全字段模糊查询（QApplication offscreen 构建页面）。"""
+# tests/test_analyze_page.py（历史文件名保留：test_analyze_chart.py）
+"""③ 页：条件过滤保留 2 行、无图表、Pod 明细框加大、关键字模糊查询、HTML 导出。"""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCharts import QHorizontalBarSeries
 from PySide6.QtWidgets import QApplication
 
 from src.models import PodMeta
+from src.ui.analyze_page import export_table_html
 
 
 @pytest.fixture(scope="module")
@@ -27,31 +27,34 @@ def _build_page(app, monkeypatch, tmp_path, metas):
     return page
 
 
-def test_group_stats_renders_bar_chart(app, monkeypatch, tmp_path):
-    metas = [
-        PodMeta(name=f"p{i}", namespace="ns", deploy_name=f"d{i % 2}",
-                node=f"node-{i % 2}")
-        for i in range(6)
-    ]
-    page = _build_page(app, monkeypatch, tmp_path, metas)
+def test_two_condition_rows_table_bigger_no_chart(app, monkeypatch, tmp_path):
+    """查询条件保留 2 个；图表已移除；Pod 明细表加大。"""
+    page = _build_page(app, monkeypatch, tmp_path, [])
     try:
-        page.group_combo.setCurrentText("deployName")
-        page._group_stats()
-        # setVisible(True) 后不再处于显式隐藏态（父窗口未 show，故用 isHidden 判定）
-        assert not page.chart_view.isHidden()
-        chart = page.chart_view.chart()
-        assert chart is not None
-        assert isinstance(chart.series()[0], QHorizontalBarSeries)
-        assert chart.series()[0].barSets()[0].count() == 2  # d0、d1 两组
+        assert len(page.cond_rows) == 2
+        assert not hasattr(page, "chart_view")
+        assert page.table.minimumHeight() >= 200
     finally:
         page.deleteLater()
 
 
-def test_group_stats_empty_keeps_chart_hidden(app, monkeypatch, tmp_path):
-    page = _build_page(app, monkeypatch, tmp_path, [])
+def test_cond_filter_uses_two_rows(app, monkeypatch, tmp_path):
+    """2 个条件行参与 AND 过滤（行 0 生效）。"""
+    metas = [
+        PodMeta(name="p1", namespace="ns", deploy_name="app", node="node-1",
+                labels={"project": "proj-a"}),
+        PodMeta(name="p2", namespace="ns", deploy_name="web", node="node-2",
+                labels={"project": "proj-b"}),
+    ]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
     try:
-        page._group_stats()
-        assert page.chart_view.isHidden()
+        field, op, value = page.cond_rows[0]
+        field.setCurrentText("deployName")
+        op.setCurrentText("等于")
+        value.setText("app")
+        page._apply_query()
+        assert page.table.rowCount() == 1
+        assert page.table.item(0, 1).text() == "p1"
     finally:
         page.deleteLater()
 
@@ -77,3 +80,14 @@ def test_keyword_search_matches_annotation_value(app, monkeypatch, tmp_path):
         assert page.table.item(0, 1).text() == "db-1"
     finally:
         page.deleteLater()
+
+
+def test_export_table_html_writes_utf8_file(tmp_path):
+    out = tmp_path / "query.html"
+    path = export_table_html(["deployName", "pod"],
+                             [["app", "p1"], ["web", "p2"]], out)
+    assert path == str(out)
+    text = out.read_text(encoding="utf-8")
+    assert "查询统计结果" in text
+    assert "deployName" in text and "p1" in text and "共 2 行" in text
+    assert 'charset="utf-8"' in text

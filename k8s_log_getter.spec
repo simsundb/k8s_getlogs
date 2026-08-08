@@ -19,13 +19,11 @@ ENTRY = "main.py"
 from PyInstaller.utils.hooks import collect_all
 
 pyside_datas, pyside_bins, pyside_hidden = collect_all("PySide6")
-# ③ 页分组统计使用 QtCharts（PySide6 自带模块，但冻结包需单独收集其插件数据）
-charts_datas, charts_bins, charts_hidden = collect_all("PySide6.QtCharts")
 # 应用图标：随包分发，供运行时 setWindowIcon 使用（冻结时位于 _MEIPASS/assets）
 icon_datas = [("assets/app_icon.ico", "assets"), ("assets/app_icon.png", "assets")]
-datas = pyside_datas + charts_datas + icon_datas
-binaries = pyside_bins + charts_bins
-hiddenimports = pyside_hidden + charts_hidden + [
+datas = pyside_datas + icon_datas
+binaries = pyside_bins
+hiddenimports = pyside_hidden + [
     # 第④页 SSH 运维导出 Excel 使用 openpyxl（纯 Python），显式收进包里避免漏打包
     "openpyxl",
     "et_xmlfile",

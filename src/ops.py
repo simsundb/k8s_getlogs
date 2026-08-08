@@ -14,10 +14,22 @@ _TABLE_SEP = re.compile(r"[ \t]{2,}")
 @dataclass
 class OpsCommand:
     label: str                 # 运维项名称
-    category: str              # 类别：集群 / 节点 / 应用 / 存储
+    category: str              # 类别：集群 / 节点 / 应用 / 存储 / 自定义
     description: str           # 中文说明
     command: str               # 实际命令模板（可含 {namespace}）
     needs_namespace: bool = False  # 是否依赖当前选中命名空间
+    active: bool = True        # 停用后不出现在下拉中（「不生效」）
+
+
+def _copy_cmd(c: "OpsCommand") -> "OpsCommand":
+    """深拷贝命令（active 可变，避免改到全局默认）。"""
+    return OpsCommand(c.label, c.category, c.description, c.command,
+                      c.needs_namespace, c.active)
+
+
+def default_ops_commands() -> list["OpsCommand"]:
+    """出厂预置运维命令的副本（每次返回新列表，调用方可安全增删改）。"""
+    return [_copy_cmd(c) for c in OPS_COMMANDS]
 
 
 OPS_COMMANDS: list[OpsCommand] = [
@@ -226,3 +238,46 @@ def export_excel(results: list[OpsResult], path) -> str:
     path = str(path)
     wb.save(path)
     return path
+
+
+# ---------------- 运维项持久化（config.json） ----------------
+
+def _cmd_from_dict(d) -> "OpsCommand":
+    """从配置字典还原运维项；字段缺失时给安全默认值。"""
+    return OpsCommand(
+        label=str(d.get("label", "")).strip(),
+        category=(str(d.get("category", "")).strip() or "自定义"),
+        description=str(d.get("description", "")).strip(),
+        command=str(d.get("command", "")).strip(),
+        needs_namespace=bool(d.get("needs_namespace", False)),
+        active=bool(d.get("active", True)),
+    )
+
+
+def ops_commands_to_dicts(cmds: list["OpsCommand"]) -> list[dict]:
+    return [{
+        "label": c.label,
+        "category": c.category,
+        "description": c.description,
+        "command": c.command,
+        "needs_namespace": c.needs_namespace,
+        "active": c.active,
+    } for c in cmds]
+
+
+def load_ops_commands(data: dict) -> list["OpsCommand"]:
+    """从配置读取运维项；未配置（首次运行）时返回出厂预置。"""
+    items = data.get("ops_commands") if isinstance(data, dict) else None
+    if not items:
+        return default_ops_commands()
+    out = []
+    for it in items:
+        if isinstance(it, dict) and str(it.get("label", "")).strip():
+            out.append(_cmd_from_dict(it))
+    return out or default_ops_commands()
+
+
+def save_ops_commands(data: dict, cmds: list["OpsCommand"]) -> dict:
+    """把运维项列表写入配置 dict 的 ops_commands 字段，返回原 dict。"""
+    data["ops_commands"] = ops_commands_to_dicts(cmds)
+    return data

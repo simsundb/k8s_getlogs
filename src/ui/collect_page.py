@@ -4,11 +4,11 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QDesktopServices
+from PySide6.QtGui import (QBrush, QColor, QDesktopServices, QStandardItem,
+                           QStandardItemModel)
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QProgressBar, QPushButton, QRadioButton,
-                               QVBoxLayout, QWidget)
+                               QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
 from ..collector import Collector, write_manifest, zip_output
 from ..config import load_config, save_config
@@ -18,6 +18,50 @@ from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
 from .log_panel import LogPanel
 from .style import SELECT_BG
+
+
+class CheckableCombo(QComboBox):
+    """支持勾选多值的下拉框：点击项切换勾选，弹层保持打开方便连续多选。
+
+    勾选结果通过 itemsToggled 通知；勾选某个部署名即选中该部署名下全部 Pod。
+    """
+
+    itemsToggled = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._model = QStandardItemModel(self)
+        self.setModel(self._model)
+        self._model.itemChanged.connect(lambda _i: self.itemsToggled.emit())
+        self.view().pressed.connect(self._on_pressed)
+        self._keep_open = False
+
+    def add_checkable_item(self, text, user_data=None):
+        self.addItem(text)
+        item = self._model.item(self.count() - 1)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Unchecked)          # 默认全部不勾选
+        if user_data is not None:
+            item.setData(user_data, Qt.UserRole)
+
+    def checked_items(self) -> list[str]:
+        return [self._model.item(r).text()
+                for r in range(self._model.rowCount())
+                if self._model.item(r).checkState() == Qt.Checked]
+
+    def _on_pressed(self, index):
+        item = self._model.itemFromIndex(index)
+        if item is None or not (item.flags() & Qt.ItemIsUserCheckable):
+            return
+        item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked
+                           else Qt.Checked)
+        self._keep_open = True                    # 本次点击不收起弹层
+
+    def hidePopup(self):
+        if self._keep_open:
+            self._keep_open = False
+            return
+        super().hidePopup()
 
 
 class _CollectWorker(QThread):
@@ -68,18 +112,13 @@ class CollectPage(QWidget):
         pod_group = QGroupBox("Pod 选择")
         pod_layout = QVBoxLayout(pod_group)
         mode_row = QHBoxLayout()
-        self.all_radio = QRadioButton("全部 Pod")
-        self.pick_radio = QRadioButton("手动勾选")
-        self.pick_radio.setChecked(True)          # 默认手动勾选、全部不勾选
-        mode_row.addWidget(self.all_radio)
-        mode_row.addWidget(self.pick_radio)
-        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn = QPushButton("全选")        # 选择全部 Pod
         self.deselect_all_btn = QPushButton("取消全选")
         mode_row.addWidget(self.select_all_btn)
         mode_row.addWidget(self.deselect_all_btn)
-        mode_row.addWidget(QLabel("部署名:"))
-        self.deploy_combo = QComboBox()
-        self.deploy_combo.addItem("全部")
+        mode_row.addSpacing(16)
+        mode_row.addWidget(QLabel("部署名(可多选):"))
+        self.deploy_combo = CheckableCombo()             # 勾选部署名=选中其全部 Pod
         self.deploy_combo.setMinimumWidth(240)
         mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
@@ -124,8 +163,7 @@ class CollectPage(QWidget):
         self.choose_btn.clicked.connect(self._choose_dir)
         self.start_btn.clicked.connect(self.start_collect)
         self.cancel_btn.clicked.connect(self._cancel)
-        self.all_radio.toggled.connect(lambda _: self._update_pod_state())
-        self.deploy_combo.currentTextChanged.connect(self._on_deploy_changed)
+        self.deploy_combo.itemsToggled.connect(self._on_deploy_toggled)
         self.search_edit.textChanged.connect(lambda _t: self._update_visibility())
         self.select_all_btn.clicked.connect(self._on_select_all)
         self.deselect_all_btn.clicked.connect(self._on_deselect_all)
@@ -157,78 +195,84 @@ class CollectPage(QWidget):
             self._on_error(f"加载 Pod 失败: {e}")
             return
         self.pod_list.clear()
-        # 重建部署名下拉（含「全部」）；blockSignals 避免重建过程触发按部署名筛选
+        # 重建部署名多选下拉（全部默认不勾选）；blockSignals 避免重建过程触发勾选逻辑
         self.deploy_combo.blockSignals(True)
         self.deploy_combo.clear()
-        self.deploy_combo.addItem("全部")
+        for deploy in sorted({pm.deploy_name for pm in self.metas}):
+            self.deploy_combo.add_checkable_item(deploy)
+        self.deploy_combo.blockSignals(False)
         for pm in self.metas:
             item = QListWidgetItem(f"[{pm.deploy_name}]  {pm.name}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)   # 默认全部不勾选，用全选/部署名勾选
+            item.setCheckState(Qt.Unchecked)   # 默认全部不勾选
             item.setData(Qt.UserRole, pm.name)
-            item.setData(Qt.UserRole + 1, pm.deploy_name)   # 部署名，供按部署名筛选/定位
+            item.setData(Qt.UserRole + 1, pm.deploy_name)   # 部署名，供按部署名勾选
             self.pod_list.addItem(item)
-        self.deploy_combo.addItems(sorted({pm.deploy_name for pm in self.metas}))
-        self.deploy_combo.blockSignals(False)
         self._update_visibility()
         self.log_panel.append_log(f"命名空间 {ns} 共加载 {len(self.metas)} 个 Pod")
 
     def _update_visibility(self):
-        """按关键字 + 部署名筛选可见 Pod（仅隐藏不匹配行，不影响勾选状态）。"""
+        """搜索框只缩窄可见范围（隐藏不匹配行）；采集 = 已勾选 ∩ 可见。"""
         text = self.search_edit.text().strip().lower()
-        deploy = self.deploy_combo.currentText()
         for i in range(self.pod_list.count()):
             item = self.pod_list.item(i)
-            hidden = bool(text and text not in item.text().lower())
-            if deploy != "全部" and item.data(Qt.UserRole + 1) != deploy:
-                hidden = True
-            item.setHidden(hidden)
+            item.setHidden(bool(text and text not in item.text().lower()))
 
-    def _on_deploy_changed(self, deploy):
-        """选中具体部署名：切到手动勾选并勾选该部署下全部 Pod 作为预览；
-        实际采集集由 _selected_pods 按部署名确定，保证「选部署名=采集该部署全部 Pod」。"""
-        if deploy != "全部":
-            self.pick_radio.setChecked(True)
+    def _on_deploy_toggled(self):
+        """部署名多选变化：勾选=选中该部署全部 Pod，取消=取消该部署全部 Pod。"""
+        model = self.deploy_combo.model()
+        for r in range(model.rowCount()):
+            d_item = model.item(r)
+            if not (d_item.flags() & Qt.ItemIsUserCheckable):
+                continue
+            target = d_item.checkState() == Qt.Checked
             for i in range(self.pod_list.count()):
                 item = self.pod_list.item(i)
-                if item.data(Qt.UserRole + 1) == deploy:
-                    item.setCheckState(Qt.Checked)
+                if item.data(Qt.UserRole + 1) == d_item.text():
+                    item.setCheckState(Qt.Checked if target else Qt.Unchecked)
         self._update_visibility()
 
-    def _update_pod_state(self):
-        pick = self.pick_radio.isChecked()
+    def _sync_deploy_combo(self):
+        """让部署名勾选状态与 Pod 实际勾选同步：某部署全部勾选才显示勾选。"""
+        by_deploy: dict[str, list[bool]] = {}
         for i in range(self.pod_list.count()):
             item = self.pod_list.item(i)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable if pick
-                          else item.flags() & ~Qt.ItemIsUserCheckable)
+            by_deploy.setdefault(item.data(Qt.UserRole + 1), []).append(
+                item.checkState() == Qt.Checked)
+        self.deploy_combo.blockSignals(True)
+        model = self.deploy_combo.model()
+        for r in range(model.rowCount()):
+            item = model.item(r)
+            states = by_deploy.get(item.text())
+            if states:
+                item.setCheckState(Qt.Checked if all(states) else Qt.Unchecked)
+        self.deploy_combo.blockSignals(False)
 
     def _on_select_all(self):
-        """全选当前可见条目（隐藏的过滤结果不勾选，配合「在已选基础上过滤」）。"""
+        """全选 = 选择全部 Pod（含被搜索过滤隐藏的；采集时仍按可见范围收窄）。"""
         for i in range(self.pod_list.count()):
             item = self.pod_list.item(i)
-            if item.flags() & Qt.ItemIsUserCheckable and not item.isHidden():
+            if item.flags() & Qt.ItemIsUserCheckable:
                 item.setCheckState(Qt.Checked)
+        self._sync_deploy_combo()
 
     def _on_deselect_all(self):
         for i in range(self.pod_list.count()):
             item = self.pod_list.item(i)
             if item.flags() & Qt.ItemIsUserCheckable:
                 item.setCheckState(Qt.Unchecked)
+        self._sync_deploy_combo()
 
     def _on_pod_item_changed(self, item):
-        """勾选/取消时切换条目背景色，点击即有视觉反馈。"""
+        """勾选/取消时切换条目背景色并同步部署名勾选状态。"""
         if item.checkState() == Qt.Checked:
             item.setBackground(QBrush(QColor(SELECT_BG)))
         else:
             item.setBackground(QBrush())
+        self._sync_deploy_combo()
 
     def _selected_pods(self):
-        deploy = self.deploy_combo.currentText()
-        if deploy != "全部":
-            # 选中的是部署名：取该部署名下的全部 Pod（可能多个 Pod 同属一个部署名）
-            return [pm.name for pm in self.metas if pm.deploy_name == deploy]
-        if self.all_radio.isChecked():
-            return [pm.name for pm in self.metas]
+        """采集集 = 已勾选且当前可见的 Pod（过滤在已选基础上缩窄）。"""
         return [self.pod_list.item(i).data(Qt.UserRole)
                 for i in range(self.pod_list.count())
                 if not self.pod_list.item(i).isHidden()

@@ -1,5 +1,5 @@
 # tests/test_collect_deploy.py
-"""采集页 Pod 选择：按部署名 / 全选 / 取消全选 / 过滤基础上勾选 / 默认不选。"""
+"""采集页 Pod 选择：默认全不选、全选=选全部、部署名多选、过滤缩窄、勾选变色。"""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -28,6 +28,17 @@ def _build_page(app, monkeypatch, tmp_path, metas):
     return page
 
 
+def _set_deploy_checked(page, deploy, checked):
+    """勾选/取消勾选部署名（等效点击下拉里的复选框）。"""
+    model = page.deploy_combo.model()
+    for r in range(model.rowCount()):
+        item = model.item(r)
+        if item.text() == deploy:
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            return
+    raise AssertionError(f"部署名 {deploy} 不在下拉中")
+
+
 def test_deploy_combo_populated_from_metas(app, monkeypatch, tmp_path):
     metas = [
         PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
@@ -37,59 +48,29 @@ def test_deploy_combo_populated_from_metas(app, monkeypatch, tmp_path):
     page = _build_page(app, monkeypatch, tmp_path, metas)
     try:
         items = [page.deploy_combo.itemText(i) for i in range(page.deploy_combo.count())]
-        assert items[0] == "全部"
-        assert items[1:] == ["ppl2", "web"]
+        assert items == ["ppl2", "web"]                       # 部署名多选下拉（无「全部」项）
+        model = page.deploy_combo.model()
+        for r in range(model.rowCount()):
+            assert model.item(r).checkState() == Qt.Unchecked  # 默认全不勾
     finally:
         page.deleteLater()
 
 
-def test_select_deploy_name_collects_all_its_pods(app, monkeypatch, tmp_path):
-    """选中的是部署名：返回该部署名下全部 Pod（ppl2-a 与 ppl2-b 同属 ppl2）。"""
-    metas = [
-        PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
-        PodMeta(name="ppl2-b", namespace="ns", deploy_name="ppl2"),
-        PodMeta(name="web-0", namespace="ns", deploy_name="web"),
-    ]
-    page = _build_page(app, monkeypatch, tmp_path, metas)
-    try:
-        page.deploy_combo.setCurrentText("ppl2")
-        assert page._selected_pods() == ["ppl2-a", "ppl2-b"]
-    finally:
-        page.deleteLater()
-
-
-def test_deploy_all_restores_full_scope(app, monkeypatch, tmp_path):
-    metas = [
-        PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
-        PodMeta(name="web-0", namespace="ns", deploy_name="web"),
-    ]
-    page = _build_page(app, monkeypatch, tmp_path, metas)
-    try:
-        page.deploy_combo.setCurrentText("ppl2")
-        assert page._selected_pods() == ["ppl2-a"]
-
-        # 回到「全部」：「全部 Pod」模式恢复整个命名空间范围
-        page.deploy_combo.setCurrentText("全部")
-        page.all_radio.setChecked(True)
-        assert set(page._selected_pods()) == {"ppl2-a", "web-0"}
-    finally:
-        page.deleteLater()
-
-
-def test_default_manual_mode_nothing_checked(app, monkeypatch, tmp_path):
-    """默认手动勾选、全部不勾选：直接采集提示无选中。"""
+def test_default_nothing_selected(app, monkeypatch, tmp_path):
+    """默认全部不勾选：直接采集提示无选中。"""
     metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
              PodMeta(name="web-0", namespace="ns", deploy_name="web")]
     page = _build_page(app, monkeypatch, tmp_path, metas)
     try:
-        assert page.pick_radio.isChecked()
-        assert not page.all_radio.isChecked()
+        for i in range(page.pod_list.count()):
+            assert page.pod_list.item(i).checkState() == Qt.Unchecked
         assert page._selected_pods() == []
     finally:
         page.deleteLater()
 
 
 def test_select_all_and_deselect_all(app, monkeypatch, tmp_path):
+    """全选=选择全部 Pod，取消全选=清空。"""
     metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
              PodMeta(name="web-0", namespace="ns", deploy_name="web")]
     page = _build_page(app, monkeypatch, tmp_path, metas)
@@ -102,14 +83,44 @@ def test_select_all_and_deselect_all(app, monkeypatch, tmp_path):
         page.deleteLater()
 
 
-def test_select_all_respects_search_filter(app, monkeypatch, tmp_path):
-    """搜索框在已选/可见基础上过滤：全选只勾当前过滤结果。"""
+def test_toggle_deploy_checks_its_pods(app, monkeypatch, tmp_path):
+    """勾选部署名 = 选中该部署下全部 Pod；取消 = 取消该部署全部 Pod。"""
     metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+             PodMeta(name="ppl2-b", namespace="ns", deploy_name="ppl2"),
              PodMeta(name="web-0", namespace="ns", deploy_name="web")]
     page = _build_page(app, monkeypatch, tmp_path, metas)
     try:
-        page.search_edit.setText("web")
+        _set_deploy_checked(page, "ppl2", True)
+        assert page._selected_pods() == ["ppl2-a", "ppl2-b"]
+        _set_deploy_checked(page, "ppl2", False)
+        assert page._selected_pods() == []
+    finally:
+        page.deleteLater()
+
+
+def test_multi_deploy_selection(app, monkeypatch, tmp_path):
+    """手动支持选择多个部署名：并集采集。"""
+    metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+             PodMeta(name="web-0", namespace="ns", deploy_name="web"),
+             PodMeta(name="api-0", namespace="ns", deploy_name="api")]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
+        _set_deploy_checked(page, "ppl2", True)
+        _set_deploy_checked(page, "web", True)
+        assert set(page._selected_pods()) == {"ppl2-a", "web-0"}
+    finally:
+        page.deleteLater()
+
+
+def test_collection_respects_search_filter_after_select_all(app, monkeypatch, tmp_path):
+    """全选后加搜索过滤：采集只取可见的已勾选 Pod。"""
+    metas = [PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+             PodMeta(name="ppl2-b", namespace="ns", deploy_name="ppl2"),
+             PodMeta(name="web-0", namespace="ns", deploy_name="web")]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
         page._on_select_all()
+        page.search_edit.setText("web")
         assert page._selected_pods() == ["web-0"]
     finally:
         page.deleteLater()

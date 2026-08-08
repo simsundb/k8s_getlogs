@@ -4,29 +4,22 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QPushButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QGroupBox,
+                               QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QVBoxLayout, QWidget)
 
+from ..config import load_config, save_config
 from ..models import HostConfig
-from ..ops import (OPS_COMMANDS, OpsCommand, OpsResult, build_command,
-                   export_excel, export_html)
+from ..ops import (OpsCommand, OpsResult, build_command, export_excel,
+                   export_html, load_ops_commands, save_ops_commands)
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
 from .log_panel import LogPanel
+from .ops_manager import OpsManagerDialog
 
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _categories() -> list[str]:
-    """按出现顺序去重取类别。"""
-    seen: list[str] = []
-    for c in OPS_COMMANDS:
-        if c.category not in seen:
-            seen.append(c.category)
-    return seen
 
 
 class _OpsWorker(QThread):
@@ -87,6 +80,8 @@ class OpsPage(QWidget):
         super().__init__(parent)
         self._worker = None
         self.results: list[OpsResult] = []
+        # 运维项清单：config.json 有保存则用保存的，否则用出厂预置
+        self.commands: list[OpsCommand] = load_ops_commands(load_config())
 
         root = QVBoxLayout(self)
         self.selector = HostNamespaceSelector(hosts_provider, self)
@@ -98,8 +93,6 @@ class OpsPage(QWidget):
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("类别:"))
         self.cat_combo = QComboBox()
-        self.cat_combo.addItem("全部")
-        self.cat_combo.addItems(_categories())
         row1.addWidget(self.cat_combo)
         row1.addWidget(QLabel("运维项:"))
         self.cmd_combo = QComboBox()
@@ -108,6 +101,8 @@ class OpsPage(QWidget):
         self.run_btn = QPushButton("执行")
         self.run_btn.setProperty("primary", True)
         row1.addWidget(self.run_btn)
+        self.manage_btn = QPushButton("管理运维项")
+        row1.addWidget(self.manage_btn)
         gl.addLayout(row1)
         self.cmd_desc = QLabel("")
         self.cmd_desc.setWordWrap(True)
@@ -158,6 +153,7 @@ class OpsPage(QWidget):
         self.cat_combo.currentIndexChanged.connect(self._reload_cmds)
         self.cmd_combo.currentIndexChanged.connect(self._show_cmd_desc)
         self.run_btn.clicked.connect(self._run_predefined)
+        self.manage_btn.clicked.connect(self._open_manager)
         self.custom_run_btn.clicked.connect(self._run_custom)
         self.custom_edit.returnPressed.connect(self._run_custom)
         self.stop_btn.clicked.connect(self._stop)
@@ -165,13 +161,27 @@ class OpsPage(QWidget):
         self.export_html_btn.clicked.connect(self._export_html)
         self.clear_btn.clicked.connect(self._clear)
 
+        self._refresh_categories()
         self._reload_cmds()
         self._update_export_state()
 
     # ---------- 预置命令 ----------
+    def _refresh_categories(self):
+        """按当前启用命令重建类别下拉（停用命令的类别不出现）。"""
+        cats: list[str] = []
+        for c in self.commands:
+            if c.active and c.category not in cats:
+                cats.append(c.category)
+        self.cat_combo.blockSignals(True)
+        self.cat_combo.clear()
+        self.cat_combo.addItem("全部")
+        self.cat_combo.addItems(cats)
+        self.cat_combo.blockSignals(False)
+
     def _reload_cmds(self):
         cat = self.cat_combo.currentText()
-        cmds = [c for c in OPS_COMMANDS if cat == "全部" or c.category == cat]
+        cmds = [c for c in self.commands
+                if c.active and (cat == "全部" or c.category == cat)]
         self.cmd_combo.blockSignals(True)
         self.cmd_combo.clear()
         for c in cmds:
@@ -180,6 +190,20 @@ class OpsPage(QWidget):
         if self.cmd_combo.count():
             self.cmd_combo.setCurrentIndex(0)
         self._show_cmd_desc()
+
+    def _open_manager(self):
+        """打开运维项管理对话框，保存后重建下拉并写回 config.json。"""
+        dlg = OpsManagerDialog(self.commands, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.commands = dlg.commands()
+            data = load_config()
+            save_ops_commands(data, self.commands)
+            save_config(data)
+            self._refresh_categories()
+            self._reload_cmds()
+            self.log_panel.append_log(
+                f"运维项已保存：共 {len(self.commands)} 项，"
+                f"启用 {sum(1 for c in self.commands if c.active)} 项")
 
     def _show_cmd_desc(self):
         cmd = self.cmd_combo.currentData()
