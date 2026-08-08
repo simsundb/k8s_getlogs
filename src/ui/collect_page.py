@@ -205,7 +205,7 @@ class CollectPage(QWidget):
             return SSHClient(host.ip, host.port, host.username, host.password).connect()
 
         self._worker = _CollectWorker(
-            tasks, self.metas, self.out_dir, ns, _factory, self)
+            tasks, self.metas, self.out_dir / self._date_name, ns, _factory, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.error.connect(self._on_worker_error)
