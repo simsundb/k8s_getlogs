@@ -14,6 +14,7 @@ from ..ops import (OpsCommand, OpsResult, build_command, export_excel,
                    export_html, load_ops_commands, save_ops_commands)
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
+from .icons import set_icon
 from .log_panel import LogPanel
 from .ops_manager import OpsManagerDialog
 
@@ -100,8 +101,12 @@ class OpsPage(QWidget):
         row1.addWidget(self.cmd_combo, 1)
         self.run_btn = QPushButton("执行")
         self.run_btn.setProperty("primary", True)
+        set_icon(self.run_btn, "play", color="white")
+        self.run_btn.setToolTip("SSH 到 MASTER 执行选中的预置运维命令")
         row1.addWidget(self.run_btn)
         self.manage_btn = QPushButton("管理运维项")
+        set_icon(self.manage_btn, "settings")
+        self.manage_btn.setToolTip("新增/编辑/删除/停用预置运维命令")
         row1.addWidget(self.manage_btn)
         gl.addLayout(row1)
         self.cmd_desc = QLabel("")
@@ -119,9 +124,13 @@ class OpsPage(QWidget):
         cl.addWidget(self.custom_edit, 1)
         self.custom_run_btn = QPushButton("执行")
         self.custom_run_btn.setProperty("primary", True)
+        set_icon(self.custom_run_btn, "terminal", color="white")
+        self.custom_run_btn.setToolTip("执行输入框中的自定义命令")
         cl.addWidget(self.custom_run_btn)
         self.stop_btn = QPushButton("停止")
+        set_icon(self.stop_btn, "stop-circle")
         self.stop_btn.setEnabled(False)
+        self.stop_btn.setToolTip("中断正在执行的长命令")
         cl.addWidget(self.stop_btn)
         root.addWidget(cgroup)
 
@@ -138,8 +147,14 @@ class OpsPage(QWidget):
         # ---- 导出 ----
         exp = QHBoxLayout()
         self.export_excel_btn = QPushButton("导出 Excel")
+        set_icon(self.export_excel_btn, "file-text")
+        self.export_excel_btn.setToolTip("导出为 xlsx（每命令一个工作表 + 汇总表）")
         self.export_html_btn = QPushButton("导出 HTML")
+        set_icon(self.export_html_btn, "code")
+        self.export_html_btn.setToolTip("导出为独立 HTML 报告")
         self.clear_btn = QPushButton("清空输出")
+        set_icon(self.clear_btn, "trash-2")
+        self.clear_btn.setToolTip("清空输出区与已收集的结果")
         exp.addWidget(self.export_excel_btn)
         exp.addWidget(self.export_html_btn)
         exp.addWidget(self.clear_btn)

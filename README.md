@@ -18,6 +18,12 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+## 界面图标
+
+- 按钮/导航/下拉箭头图标使用 [Feather Icons](https://feathericons.com/)（MIT 协议，可商用），已随 `assets/icons/` 打包
+- 源码：`scripts/fetch_icons.py` 从 jsdelivr CDN 下载 SVG 并用 QtSvg 渲染成双色 PNG（`accent` 主色蓝 / `white` 白底用）
+- 运行时图标缺失会自动降级为空图标（界面不报错）；需要增加/更换图标见 [`assets/icons/README.md`](assets/icons/README.md)
+
 ## 测试
 
 ```bash

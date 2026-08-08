@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
 from ..k8s_client import get_pods_meta
 from ..models import PodMeta
 from .host_ns_selector import HostNamespaceSelector
+from .icons import set_icon
 
 FILTER_FIELDS = ["deployName", "project", "namespace", "node", "image",
                  "pipelineName", "uuid", "podIP", "src", "status", "pod"]
@@ -144,7 +145,11 @@ class AnalyzePage(QWidget):
         btn_row = QHBoxLayout()
         self.query_btn = QPushButton("查询")
         self.query_btn.setProperty("primary", True)
+        set_icon(self.query_btn, "search", color="white")
+        self.query_btn.setToolTip("按上方条件过滤查询 Pod")
         self.clear_btn = QPushButton("清空条件")
+        set_icon(self.clear_btn, "filter")
+        self.clear_btn.setToolTip("清空全部过滤与搜索条件")
         btn_row.addWidget(self.query_btn)
         btn_row.addWidget(self.clear_btn)
         btn_row.addStretch(1)
@@ -160,6 +165,8 @@ class AnalyzePage(QWidget):
         grp_row.addWidget(self.group_combo)
         self.group_btn = QPushButton("统计")
         self.group_btn.setProperty("primary", True)
+        set_icon(self.group_btn, "bar-chart-2", color="white")
+        self.group_btn.setToolTip("按所选字段统计 Pod 分布")
         grp_row.addWidget(self.group_btn)
         grp_row.addWidget(QLabel("结果:"))
         self.group_result = QLabel("")
@@ -175,8 +182,12 @@ class AnalyzePage(QWidget):
         self.search_edit.setMinimumWidth(240)
         search_row.addWidget(self.search_edit, 1)
         self.search_btn = QPushButton("搜索")
+        set_icon(self.search_btn, "search")
+        self.search_btn.setToolTip("全字段包含匹配当前关键字")
         search_row.addWidget(self.search_btn)
         self.export_html_btn = QPushButton("导出 HTML")
+        set_icon(self.export_html_btn, "file-text")
+        self.export_html_btn.setToolTip("把当前查询结果导出为独立 HTML 文件")
         search_row.addWidget(self.export_html_btn)
         root.addLayout(search_row)
 

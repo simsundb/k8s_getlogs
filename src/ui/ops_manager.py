@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QVBoxLayout)
 
 from ..ops import OPS_COMMANDS, OpsCommand
+from .icons import set_icon
 
 OPS_CATEGORIES = ["集群", "节点", "应用", "存储", "自定义"]
 
@@ -123,9 +124,17 @@ class OpsManagerDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self.add_btn = QPushButton("新增")
+        set_icon(self.add_btn, "plus")
+        self.add_btn.setToolTip("新增一条自定义运维命令")
         self.edit_btn = QPushButton("编辑")
+        set_icon(self.edit_btn, "edit-2")
+        self.edit_btn.setToolTip("修改选中的运维命令")
         self.del_btn = QPushButton("删除")
+        set_icon(self.del_btn, "trash-2")
+        self.del_btn.setToolTip("删除选中的运维命令")
         self.reset_btn = QPushButton("恢复默认")
+        set_icon(self.reset_btn, "rotate-ccw")
+        self.reset_btn.setToolTip("还原为出厂预置清单（丢弃当前修改）")
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.edit_btn)
         btn_row.addWidget(self.del_btn)
@@ -136,7 +145,9 @@ class OpsManagerDialog(QDialog):
         close_row = QHBoxLayout()
         self.save_close_btn = QPushButton("保存并关闭")
         self.save_close_btn.setProperty("primary", True)
+        set_icon(self.save_close_btn, "check", color="white")
         self.cancel_btn = QPushButton("取消")
+        set_icon(self.cancel_btn, "x")
         close_row.addStretch(1)
         close_row.addWidget(self.save_close_btn)
         close_row.addWidget(self.cancel_btn)

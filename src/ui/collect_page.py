@@ -16,6 +16,7 @@ from ..k8s_client import PATTERN_MAP, build_log_pattern, get_pods_meta
 from ..models import DEFAULT_LOG_DIR, CollectSummary, CollectTask, human_size
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
+from .icons import set_icon
 from .log_panel import LogPanel
 from .style import SELECT_BG
 
@@ -107,6 +108,8 @@ class CollectPage(QWidget):
         self.out_label = QLabel()
         out_row.addWidget(self.out_label, 1)
         self.choose_btn = QPushButton("选择存储目录")
+        set_icon(self.choose_btn, "folder")
+        self.choose_btn.setToolTip("采集结果的本地存储位置")
         out_row.addWidget(self.choose_btn)
         root.addLayout(out_row)
 
@@ -116,12 +119,14 @@ class CollectPage(QWidget):
         self.log_dir_edit.setText(cfg.get("log_dir") or DEFAULT_LOG_DIR)
         self.log_dir_edit.setPlaceholderText("Pod 内日志目录，留空默认 /opt/logs")
         self.log_dir_edit.setMinimumWidth(220)
+        self.log_dir_edit.setToolTip("远端 Pod 内的日志目录，采集时 cd 到该目录取日志")
         src_row.addWidget(self.log_dir_edit)
         src_row.addSpacing(16)
         src_row.addWidget(QLabel("日志名:"))
         self.log_name_edit = QLineEdit()
         self.log_name_edit.setPlaceholderText("非空时匹配包含该名的 .log")
         self.log_name_edit.setMinimumWidth(180)
+        self.log_name_edit.setToolTip("输入非空时，只匹配文件名包含该字的 .log（如 err → *err*.log）")
         src_row.addWidget(self.log_name_edit)
         src_row.addStretch(1)
         root.addLayout(src_row)
@@ -130,18 +135,24 @@ class CollectPage(QWidget):
         pod_layout = QVBoxLayout(pod_group)
         mode_row = QHBoxLayout()
         self.select_all_btn = QPushButton("全选")        # 选择全部 Pod
+        set_icon(self.select_all_btn, "check-square")
+        self.select_all_btn.setToolTip("勾选全部 Pod（可再配合右侧过滤收窄）")
         self.deselect_all_btn = QPushButton("取消全选")
+        set_icon(self.deselect_all_btn, "square")
+        self.deselect_all_btn.setToolTip("取消全部勾选")
         mode_row.addWidget(self.select_all_btn)
         mode_row.addWidget(self.deselect_all_btn)
         mode_row.addSpacing(16)
         mode_row.addWidget(QLabel("部署名(可多选):"))
         self.deploy_combo = CheckableCombo()             # 勾选部署名=选中其全部 Pod
         self.deploy_combo.setMinimumWidth(240)
+        self.deploy_combo.setToolTip("勾选部署名 = 选中该部署下全部 Pod；支持多选")
         mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("在已选基础上过滤：搜索 Pod 名 / 部署名...")
         self.search_edit.setMinimumWidth(220)
+        self.search_edit.setToolTip("只缩窄可见范围：采集 = 已勾选 ∩ 可见")
         mode_row.addWidget(self.search_edit)
         pod_layout.addLayout(mode_row)
         self.pod_list = QListWidget()
@@ -160,8 +171,12 @@ class CollectPage(QWidget):
         cat_row.addStretch(1)
         self.start_btn = QPushButton("开始采集")
         self.start_btn.setProperty("primary", True)
+        set_icon(self.start_btn, "download", color="white")
+        self.start_btn.setToolTip("并发拉取所选 Pod 的日志并打包")
         self.cancel_btn = QPushButton("取消")
+        set_icon(self.cancel_btn, "x")
         self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setToolTip("停止正在进行的采集")
         cat_row.addWidget(self.start_btn)
         cat_row.addWidget(self.cancel_btn)
         root.addLayout(cat_row)

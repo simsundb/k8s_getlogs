@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from src.config import APP_DIR
 from src.logger import setup_logging
+from src.ui.icons import combo_arrow_qss
 from src.ui.main_window import MainWindow
 from src.ui.style import APP_STYLE
 
@@ -31,7 +32,7 @@ def _center_on_screen(app, win) -> None:
 def main():
     setup_logging(APP_DIR / "logs")
     app = QApplication(sys.argv)
-    app.setStyleSheet(APP_STYLE)
+    app.setStyleSheet(APP_STYLE + combo_arrow_qss())
     app.setWindowIcon(QIcon(_resource_path("app_icon.png")))
     win = MainWindow()
     win.show()

@@ -8,7 +8,6 @@ ACCENT_PRESSED = "#285090"
 BG = "#f3f5f9"          # 页面底色
 CARD = "#ffffff"        # 卡片/输入底色
 BORDER = "#d8dce4"
-BORDER_FOCUS = "#6b93d6"
 TEXT = "#2b3240"
 TEXT_SUB = "#6a7380"
 ROW_ALT = "#f6f8fc"
@@ -38,7 +37,17 @@ QGroupBox::title {{
     subcontrol-origin: margin;
     left: 10px;
     padding: 0 4px;
-    color: {TEXT_SUB};
+    color: {ACCENT};
+}}
+
+/* 鼠标悬停提示：深色卡片，跟随全局字体 */
+QToolTip {{
+    background: #2b3240;
+    color: #ffffff;
+    border: 1px solid #1f2630;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 12px;
 }}
 QPushButton {{
     background: {CARD};
@@ -70,9 +79,16 @@ QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {{
     selection-background-color: {ACCENT};
     selection-color: #ffffff;
 }}
+QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{
+    border-color: #bcc6d6;
+}}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
-QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {BORDER_FOCUS}; }}
+QPlainTextEdit:focus, QTextEdit:focus {{
+    border-color: {ACCENT};
+    background: #fbfcff;
+}}
 QComboBox::drop-down {{ border: none; width: 24px; }}
+/* 无箭头兜底；运行时由 icons.combo_arrow_qss() 追加 chevron-down 图标 */
 QComboBox::down-arrow {{ image: none; }}
 QComboBox QAbstractItemView {{
     background: {CARD};
@@ -115,6 +131,28 @@ QListWidget::item:selected {{
     color: #ffffff;
 }}
 QListWidget::item:hover:!selected {{ background: {SELECT_BG}; }}
+
+/* 左侧导航侧边栏：选中项浅蓝药丸（导航图标是 accent 色，浅底才看得清） */
+QListWidget#nav {{
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 8px 6px;
+    outline: 0;
+    font-size: 14px;
+}}
+QListWidget#nav::item {{
+    padding: 10px 10px;
+    border-radius: 6px;
+    margin: 3px 0;
+    color: {TEXT};
+}}
+QListWidget#nav::item:hover:!selected {{ background: #e6ebf4; }}
+QListWidget#nav::item:selected {{
+    background: {SELECT_BG};
+    color: {ACCENT};
+    font-weight: bold;
+}}
 
 QProgressBar {{
     border: 1px solid {BORDER};

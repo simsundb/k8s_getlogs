@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton,
 from ..k8s_client import list_namespaces
 from ..models import HostConfig
 from ..ssh_client import SSHClient
+from .icons import set_icon
 
 
 class HostNamespaceSelector(QWidget):
@@ -29,6 +30,8 @@ class HostNamespaceSelector(QWidget):
         layout.addWidget(self.host_combo)
         self.connect_btn = QPushButton("连接")
         self.connect_btn.setProperty("primary", True)
+        set_icon(self.connect_btn, "log-in", color="white")
+        self.connect_btn.setToolTip("SSH 连接所选主机并自动拉取命名空间列表")
         layout.addWidget(self.connect_btn)
         layout.addSpacing(16)
         layout.addWidget(QLabel("命名空间:"))
@@ -36,6 +39,8 @@ class HostNamespaceSelector(QWidget):
         self.ns_combo.setMinimumWidth(260)
         layout.addWidget(self.ns_combo)
         self.refresh_btn = QPushButton("刷新")
+        set_icon(self.refresh_btn, "refresh-cw")
+        self.refresh_btn.setToolTip("重新拉取命名空间列表")
         layout.addWidget(self.refresh_btn)
         layout.addStretch(1)
 

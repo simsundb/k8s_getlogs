@@ -21,6 +21,8 @@ from PyInstaller.utils.hooks import collect_all
 pyside_datas, pyside_bins, pyside_hidden = collect_all("PySide6")
 # 应用图标：随包分发，供运行时 setWindowIcon 使用（冻结时位于 _MEIPASS/assets）
 icon_datas = [("assets/app_icon.ico", "assets"), ("assets/app_icon.png", "assets")]
+# 界面图标：按 色/名.png 组织，icons.py 运行时从 _MEIPASS/assets/icons 取
+icon_datas += [("assets/icons", "assets/icons")]
 datas = pyside_datas + icon_datas
 binaries = pyside_bins
 hiddenimports = pyside_hidden + [

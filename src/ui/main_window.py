@@ -9,7 +9,12 @@ from ..config import hosts_from_config, load_config
 from .analyze_page import AnalyzePage
 from .collect_page import CollectPage
 from .host_page import HostPage
+from .icons import icon
 from .ops_page import OpsPage
+
+# 左侧导航：名称 → 图标
+NAV_ITEMS = [("① 主机配置", "server"), ("② 日志抓取", "download"),
+             ("③ 查询分析", "search"), ("④ SSH 运维", "terminal")]
 
 APP_TITLE = "资源管控中心-k8s日志采集工具"
 APP_AUTHOR = "SunZH"
@@ -24,9 +29,10 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QHBoxLayout(central)
         self.nav = QListWidget()
+        self.nav.setObjectName("nav")
         self.nav.setFixedWidth(150)
-        for name in ("① 主机配置", "② 日志抓取", "③ 查询分析", "④ SSH 运维"):
-            self.nav.addItem(QListWidgetItem(name))
+        for name, ico in NAV_ITEMS:
+            self.nav.addItem(QListWidgetItem(icon(ico), name))
         layout.addWidget(self.nav)
 
         self.stack = QStackedWidget()

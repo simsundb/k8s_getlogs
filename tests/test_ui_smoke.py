@@ -3,7 +3,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QApplication, QHeaderView, QPlainTextEdit)
+from PySide6.QtWidgets import (QApplication, QHeaderView, QPlainTextEdit,
+                               QPushButton)
 
 
 @pytest.fixture(scope="module")
@@ -91,6 +92,25 @@ def test_log_panel_uses_fixed_pitch_font(app, monkeypatch, tmp_path):
         assert any(k in family for k in ("mono", "consolas", "courier", "menlo", "monaco"))
     finally:
         panel.deleteLater()
+
+
+def test_icons_load_and_apply(app, monkeypatch, tmp_path):
+    """图标资源存在且能给按钮设置图标（资源缺失会返回空图标，也不应崩溃）。"""
+    from src.ui.icons import combo_arrow_qss, icon, set_icon
+    for name, color in [("server", "accent"), ("download", "white")]:
+        qicon = icon(name, color)
+        assert not qicon.isNull(), f"图标缺失: {name}/{color}.png"
+    qss = combo_arrow_qss()
+    assert "chevron-down" in qss and "url(" in qss   # 下拉箭头图标片段已生成
+    btn = QPushButton()
+    try:
+        set_icon(btn, "refresh-cw")
+        assert not btn.icon().isNull()
+        assert not btn.iconSize().isEmpty()
+        set_icon(btn, "不存在的图标")      # 缺失时静默降级
+        assert btn.iconSize().isEmpty() is False
+    finally:
+        btn.deleteLater()
 
 
 def test_center_on_screen_runs(app, monkeypatch, tmp_path):
