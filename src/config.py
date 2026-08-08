@@ -1,6 +1,7 @@
 """K8S 日志采集工具配置读写（JSON + base64 密码混淆）。"""
 import base64
 import json
+import os
 from pathlib import Path
 
 from .models import HostConfig
@@ -29,21 +30,25 @@ def load_config() -> dict:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             pass
     return default_config()
 
 
 def save_config(data: dict) -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
+    tmp = CONFIG_PATH.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, CONFIG_PATH)
 
 
 def hosts_from_config(data: dict) -> list[HostConfig]:
     items = data.get("hosts", []) if isinstance(data, dict) else data
     out = []
     for item in items:
+        if not isinstance(item, dict):
+            continue
         try:
             out.append(HostConfig(
                 ip=item["ip"],
@@ -52,12 +57,12 @@ def hosts_from_config(data: dict) -> list[HostConfig]:
                 password=decode_password(item["password_b64"]),
                 remark=item.get("remark", ""),
             ))
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError):
             continue
     return out
 
 
-def hosts_to_config(hosts: list[HostConfig]) -> list:
+def hosts_to_config(hosts: list[HostConfig]) -> list[dict]:
     return [{
         "ip": h.ip,
         "port": h.port,

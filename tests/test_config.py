@@ -57,3 +57,45 @@ def test_save_and_load_config_roundtrip(tmp_path, monkeypatch):
     assert back[0].password == "s3cret"
     raw = (tmp_path / "config.json").read_text(encoding="utf-8")
     assert "s3cret" not in raw
+
+
+def test_hosts_from_config_skips_non_dict_element():
+    data = {"hosts": [
+        "oops",
+        {
+            "ip": "1.2.3.4",
+            "username": "u",
+            "password_b64": encode_password("x"),
+        },
+    ]}
+    out = hosts_from_config(data)
+    assert len(out) == 1
+    assert out[0].ip == "1.2.3.4"
+
+
+def test_hosts_from_config_skips_dict_instead_of_list():
+    data = {"hosts": {"ip": "1.2.3.4", "username": "u"}}
+    assert hosts_from_config(data) == []
+
+
+def test_load_config_invalid_json_returns_default(tmp_path, monkeypatch):
+    import src.config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
+    assert load_config() == {"hosts": [], "output_dir": ""}
+
+
+def test_password_base64_roundtrip_unicode():
+    password = "密码P@ss123"
+    assert decode_password(encode_password(password)) == password
+
+
+def test_save_and_load_config_keeps_unicode_remark(tmp_path, monkeypatch):
+    import src.config as cfg
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
+    hosts = [HostConfig(
+        ip="5.6.7.8", username="u", password="pw", remark="生产环境节点")]
+    save_config({"hosts": hosts_to_config(hosts), "output_dir": ""})
+    back = hosts_from_config(load_config())
+    assert back[0].remark == "生产环境节点"
