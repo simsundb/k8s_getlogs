@@ -108,7 +108,7 @@ class AnalyzePage(QWidget):
         root.addWidget(self.table, 1)
 
         self.selector.namespacesLoaded.connect(lambda _n: self._load_pods())
-        self.selector.connectionFailed.connect(lambda _m: self.table.setRowCount(0))
+        self.selector.connectionFailed.connect(self._on_connection_failed)
         self.query_btn.clicked.connect(self._apply_query)
         self.clear_btn.clicked.connect(self._clear_conditions)
         self.group_btn.clicked.connect(self._group_stats)
@@ -121,10 +121,19 @@ class AnalyzePage(QWidget):
         try:
             self.metas = get_pods_meta(self.selector.client(), ns)
         except Exception as e:
-            self.table.setRowCount(0)
+            self._clear_data()
             self.group_result.setText(f"加载 Pod 失败: {e}")
             return
         self._apply_query()
+
+    def _clear_data(self):
+        """数据源失效时清空缓存与界面，避免查询/统计操作到旧数据。"""
+        self.metas = []
+        self.table.setRowCount(0)
+        self.group_result.setText("")
+
+    def _on_connection_failed(self, _message):
+        self._clear_data()
 
     def _clear_conditions(self):
         for _, _, value in self.cond_rows:
@@ -156,7 +165,7 @@ class AnalyzePage(QWidget):
         self.table.setRowCount(0)
         for i, pm in enumerate(metas):
             s = pm.summary()
-            values = [s["deployName"], pm.name, s["project"], s["node"], s["image"],
+            values = [s["deployName"], s["pod"], s["project"], s["node"], s["image"],
                       s["podIP"], str(s["restartCount"]), s["startTime"]]
             self.table.insertRow(i)
             for j, v in enumerate(values):
