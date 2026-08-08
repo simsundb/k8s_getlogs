@@ -161,6 +161,10 @@ class AnalyzePage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # 单元格内容超宽时不折行、自动出横向滚动条；行数超出时纵向滚动条自动出现
+        self.table.setWordWrap(False)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.itemDoubleClicked.connect(self._show_detail)
         root.addWidget(self.table, 1)
 

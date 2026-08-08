@@ -21,7 +21,9 @@ from PyInstaller.utils.hooks import collect_all
 pyside_datas, pyside_bins, pyside_hidden = collect_all("PySide6")
 # ③ 页分组统计使用 QtCharts（PySide6 自带模块，但冻结包需单独收集其插件数据）
 charts_datas, charts_bins, charts_hidden = collect_all("PySide6.QtCharts")
-datas = pyside_datas + charts_datas
+# 应用图标：随包分发，供运行时 setWindowIcon 使用（冻结时位于 _MEIPASS/assets）
+icon_datas = [("assets/app_icon.ico", "assets"), ("assets/app_icon.png", "assets")]
+datas = pyside_datas + charts_datas + icon_datas
 binaries = pyside_bins + charts_bins
 hiddenimports = pyside_hidden + charts_hidden + [
     # paramiko 依赖的底层库一般能被静态检测到；若打包后运行报缺模块，取消下面注释重新打包
@@ -56,6 +58,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name=APP_NAME,
+    icon="assets/app_icon.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

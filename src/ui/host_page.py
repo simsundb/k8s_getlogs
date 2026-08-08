@@ -1,8 +1,8 @@
 # src/ui/host_page.py
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                               QMessageBox, QPushButton, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..config import (hosts_from_config, hosts_to_config, load_config,
                       save_config)
@@ -44,6 +44,11 @@ class HostPage(QWidget):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["IP", "端口", "账号", "备注"])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        # 列铺满整行宽度（不再右侧留空）；单元格内容超宽时不折行、自动出横向滚动条
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setWordWrap(False)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         layout.addWidget(self.table, 1)
 
         form = QVBoxLayout()

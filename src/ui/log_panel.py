@@ -1,4 +1,5 @@
 # src/ui/log_panel.py
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPlainTextEdit
 
 
@@ -9,6 +10,10 @@ class LogPanel(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setMaximumBlockCount(5000)
+        # 长行不折行：内容超出宽度时出现横向滚动条；行数超出时纵向滚动条自动出现
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
     def append_log(self, text: str) -> None:
         self.appendPlainText(text)

@@ -85,6 +85,8 @@ class CollectPage(QWidget):
         pod_layout.addLayout(mode_row)
         self.pod_list = QListWidget()
         self.pod_list.setSelectionMode(QListWidget.NoSelection)
+        self.pod_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.pod_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         pod_layout.addWidget(self.pod_list, 1)
         root.addWidget(pod_group, 1)
 
