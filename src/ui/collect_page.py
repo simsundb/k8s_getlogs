@@ -104,8 +104,9 @@ class CollectPage(QWidget):
         self.log_panel = LogPanel()
         root.addWidget(self.log_panel, 1)
 
-        self.selector.namespacesLoaded.connect(lambda _n: self._load_pods())
         self.selector.connectionFailed.connect(self._on_error)
+        # 命名空间下拉切换时重载 Pod 列表（选中即加载）
+        self.selector.ns_combo.currentIndexChanged.connect(lambda _i: self._load_pods())
         self.choose_btn.clicked.connect(self._choose_dir)
         self.start_btn.clicked.connect(self.start_collect)
         self.cancel_btn.clicked.connect(self._cancel)
@@ -167,12 +168,6 @@ class CollectPage(QWidget):
                 if not self.pod_list.item(i).isHidden()
                 and self.pod_list.item(i).checkState() == Qt.Checked]
 
-    def _make_client(self):
-        host = self.selector.current_host()
-        if host is None:
-            raise RuntimeError("未选择主机")
-        return SSHClient(host.ip, host.port, host.username, host.password).connect()
-
     def start_collect(self):
         ns = self.selector.ns_combo.currentText()
         if not ns or not self.metas:
@@ -181,6 +176,10 @@ class CollectPage(QWidget):
         pod_names = self._selected_pods()
         if not pod_names:
             self._on_error("没有选中的 Pod")
+            return
+        host = self.selector.current_host()
+        if host is None:
+            self._on_error("未选择主机")
             return
         category = self.cat_combo.currentText()
         pattern = PATTERN_MAP[category]
@@ -196,9 +195,17 @@ class CollectPage(QWidget):
         self.log_panel.clear_log()
         self.log_panel.append_log(
             f"开始采集：{len(tasks)} 个 Pod，类别={category}，存储={self.out_dir}")
+
+        # 快照主机/命名空间/类别，采集过程中用户切换界面选择不影响本批任务：
+        # 工厂由线程池调用，绝不能跨线程访问 Qt 控件，故闭包只捕获 HostConfig 快照。
+        self._ns = ns
+        self._category = category
+
+        def _factory():
+            return SSHClient(host.ip, host.port, host.username, host.password).connect()
+
         self._worker = _CollectWorker(
-            tasks, self.metas, self.out_dir, ns,
-            self._make_client, self)
+            tasks, self.metas, self.out_dir, ns, _factory, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.error.connect(self._on_worker_error)
@@ -214,8 +221,9 @@ class CollectPage(QWidget):
     def _on_finished(self, results, metas, summary):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        ns = self.selector.ns_combo.currentText()
-        category = self.cat_combo.currentText()
+        # 使用开始采集时的快照，避免采集期间用户切换命名空间/类别导致 manifest 与压缩包命名漂移
+        ns = self._ns
+        category = self._category
         manifest_path = self.out_dir / self._date_name / "pods_manifest.json"
         write_manifest(manifest_path, ns, metas, results)
         zip_path = zip_output(self.out_dir, self._date_name, ns, category)
@@ -223,11 +231,20 @@ class CollectPage(QWidget):
             f"完成：成功 {summary.ok} / 跳过 {summary.skipped} / 失败 {summary.failed}")
         self.log_panel.append_log(f"压缩包：{zip_path}")
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.out_dir)))
+        self._worker = None
 
     def _cancel(self):
         if self._worker:
             self._worker.cancel_request()
             self.log_panel.append_log("取消请求已发送，正在停止...")
+
+    def closeEvent(self, event):
+        # 关闭窗口时停止仍在运行的采集线程，避免 "QThread: Destroyed while thread is still running"
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel_request()
+            self._worker.wait(3000)
+        self._worker = None
+        super().closeEvent(event)
 
     def _on_error(self, msg):
         self.log_panel.append_log(f"[错误] {msg}")
@@ -236,3 +253,4 @@ class CollectPage(QWidget):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.log_panel.append_log(f"[错误] {msg}")
+        self._worker = None
