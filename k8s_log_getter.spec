@@ -53,6 +53,32 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# 本应用只用 QtCore/QtGui/QtWidgets。collect_all + PySide6 内置 hook 会把整个
+# Qt 都收进来（Qt6WebEngineCore.dll≈200M、webengine 资源≈100M、qml≈30M、
+# avcodec 多媒体≈20M 等），对 widgets 应用全用不到。在 Analysis 合并后的最终
+# 产物上按路径/文件名片段剔除；platforms/imageformats 等运行所需插件保留。
+_DROP_FRAGMENTS = (
+    "webengine", "quick", "qml", "qt3d", "charts", "multimedia",
+    "datavisualization", "graphs", "location", "sensors", "positioning",
+    "serialport", "bluetooth", "websockets", "webchannel", "pdf",
+    "designer", "metatypes", "avcodec", "avformat", "avutil",
+    "swresample", "swscale", "qtopengl", "icudtl", "v8_context",
+)
+
+
+def _drop_path(p) -> bool:
+    low = str(p).lower()
+    return any(f in low for f in _DROP_FRAGMENTS)
+
+
+a.binaries = [t for t in a.binaries
+              if not _drop_path(t[0]) and not _drop_path(t[1])]
+a.datas = [t for t in a.datas
+           if not _drop_path(t[0]) and not _drop_path(t[1])
+           and not (t[0].lower().endswith(".qm")
+                    and "zh_cn" not in t[0].lower())]  # 只留中文本地化
+a.pure = [m for m in a.pure if not _drop_path(m[0])]
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
