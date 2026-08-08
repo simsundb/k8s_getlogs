@@ -80,6 +80,19 @@ def test_log_panel_no_wrap_and_scroll(app, monkeypatch, tmp_path):
         page.deleteLater()
 
 
+def test_log_panel_uses_fixed_pitch_font(app, monkeypatch, tmp_path):
+    """④页运维输出等宽字体：kubectl/df 对齐输出列对齐可读。"""
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
+    from src.ui.log_panel import LogPanel
+    panel = LogPanel()
+    try:
+        family = panel.font().family().lower()
+        assert any(k in family for k in ("mono", "consolas", "courier", "menlo", "monaco"))
+    finally:
+        panel.deleteLater()
+
+
 def test_center_on_screen_runs(app, monkeypatch, tmp_path):
     """窗口居中 + 屏幕自适应逻辑可执行、尺寸非负。"""
     monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")

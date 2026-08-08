@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QProgressBar, QPushButton, QRadioButton,
@@ -17,6 +17,7 @@ from ..models import CollectSummary, CollectTask, human_size
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
 from .log_panel import LogPanel
+from .style import SELECT_BG
 
 
 class _CollectWorker(QThread):
@@ -69,17 +70,21 @@ class CollectPage(QWidget):
         mode_row = QHBoxLayout()
         self.all_radio = QRadioButton("全部 Pod")
         self.pick_radio = QRadioButton("手动勾选")
-        self.all_radio.setChecked(True)
+        self.pick_radio.setChecked(True)          # 默认手动勾选、全部不勾选
         mode_row.addWidget(self.all_radio)
         mode_row.addWidget(self.pick_radio)
+        self.select_all_btn = QPushButton("全选")
+        self.deselect_all_btn = QPushButton("取消全选")
+        mode_row.addWidget(self.select_all_btn)
+        mode_row.addWidget(self.deselect_all_btn)
         mode_row.addWidget(QLabel("部署名:"))
         self.deploy_combo = QComboBox()
         self.deploy_combo.addItem("全部")
-        self.deploy_combo.setMinimumWidth(150)
+        self.deploy_combo.setMinimumWidth(240)
         mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("搜索 Pod 名 / 部署名...")
+        self.search_edit.setPlaceholderText("在已选基础上过滤：搜索 Pod 名 / 部署名...")
         self.search_edit.setMinimumWidth(220)
         mode_row.addWidget(self.search_edit)
         pod_layout.addLayout(mode_row)
@@ -122,6 +127,9 @@ class CollectPage(QWidget):
         self.all_radio.toggled.connect(lambda _: self._update_pod_state())
         self.deploy_combo.currentTextChanged.connect(self._on_deploy_changed)
         self.search_edit.textChanged.connect(lambda _t: self._update_visibility())
+        self.select_all_btn.clicked.connect(self._on_select_all)
+        self.deselect_all_btn.clicked.connect(self._on_deselect_all)
+        self.pod_list.itemChanged.connect(self._on_pod_item_changed)
 
         cfg = load_config()
         self.out_dir = Path(cfg.get("output_dir") or str(Path.cwd() / "output"))
@@ -156,7 +164,7 @@ class CollectPage(QWidget):
         for pm in self.metas:
             item = QListWidgetItem(f"[{pm.deploy_name}]  {pm.name}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setCheckState(Qt.Unchecked)   # 默认全部不勾选，用全选/部署名勾选
             item.setData(Qt.UserRole, pm.name)
             item.setData(Qt.UserRole + 1, pm.deploy_name)   # 部署名，供按部署名筛选/定位
             self.pod_list.addItem(item)
@@ -193,6 +201,26 @@ class CollectPage(QWidget):
             item = self.pod_list.item(i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable if pick
                           else item.flags() & ~Qt.ItemIsUserCheckable)
+
+    def _on_select_all(self):
+        """全选当前可见条目（隐藏的过滤结果不勾选，配合「在已选基础上过滤」）。"""
+        for i in range(self.pod_list.count()):
+            item = self.pod_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable and not item.isHidden():
+                item.setCheckState(Qt.Checked)
+
+    def _on_deselect_all(self):
+        for i in range(self.pod_list.count()):
+            item = self.pod_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable:
+                item.setCheckState(Qt.Unchecked)
+
+    def _on_pod_item_changed(self, item):
+        """勾选/取消时切换条目背景色，点击即有视觉反馈。"""
+        if item.checkState() == Qt.Checked:
+            item.setBackground(QBrush(QColor(SELECT_BG)))
+        else:
+            item.setBackground(QBrush())
 
     def _selected_pods(self):
         deploy = self.deploy_combo.currentText()
