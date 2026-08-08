@@ -7,5 +7,6 @@ output/
 dist/
 build/
 *.egg-info/
+*.spec.bak
 .DS_Store
 Thumbs.db
