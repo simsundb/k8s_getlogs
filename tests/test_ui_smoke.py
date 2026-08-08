@@ -16,8 +16,8 @@ def test_main_window_constructs(app, monkeypatch, tmp_path):
     monkeypatch.setattr("src.config.APP_DIR", tmp_path)
     from src.ui.main_window import MainWindow
     win = MainWindow()
-    assert win.stack.count() == 3
-    assert win.nav.count() == 3
+    assert win.stack.count() == 4
+    assert win.nav.count() == 4
     win.close()
     win.deleteLater()
 

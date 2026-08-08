@@ -9,6 +9,7 @@ from ..config import hosts_from_config, load_config
 from .analyze_page import AnalyzePage
 from .collect_page import CollectPage
 from .host_page import HostPage
+from .ops_page import OpsPage
 
 APP_TITLE = "资源管控中心-k8s日志采集工具"
 APP_AUTHOR = "SunZH"
@@ -24,7 +25,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central)
         self.nav = QListWidget()
         self.nav.setFixedWidth(150)
-        for name in ("① 主机配置", "② 日志抓取", "③ 查询分析"):
+        for name in ("① 主机配置", "② 日志抓取", "③ 查询分析", "④ SSH 运维"):
             self.nav.addItem(QListWidgetItem(name))
         layout.addWidget(self.nav)
 
@@ -32,9 +33,11 @@ class MainWindow(QMainWindow):
         self.host_page = HostPage(self)
         self.collect_page = CollectPage(self._hosts_provider, self)
         self.analyze_page = AnalyzePage(self._hosts_provider, self)
+        self.ops_page = OpsPage(self._hosts_provider, self)
         self.stack.addWidget(self.host_page)
         self.stack.addWidget(self.collect_page)
         self.stack.addWidget(self.analyze_page)
+        self.stack.addWidget(self.ops_page)
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
@@ -52,6 +55,7 @@ class MainWindow(QMainWindow):
     def _refresh_selector_hosts(self):
         self.collect_page.selector.refresh_hosts()
         self.analyze_page.selector.refresh_hosts()
+        self.ops_page.selector.refresh_hosts()
 
     def _build_statusbar(self):
         bar = self.statusBar()

@@ -26,6 +26,9 @@ icon_datas = [("assets/app_icon.ico", "assets"), ("assets/app_icon.png", "assets
 datas = pyside_datas + charts_datas + icon_datas
 binaries = pyside_bins + charts_bins
 hiddenimports = pyside_hidden + charts_hidden + [
+    # 第④页 SSH 运维导出 Excel 使用 openpyxl（纯 Python），显式收进包里避免漏打包
+    "openpyxl",
+    "et_xmlfile",
     # paramiko 依赖的底层库一般能被静态检测到；若打包后运行报缺模块，取消下面注释重新打包
     # "cryptography",
     # "nacl",
