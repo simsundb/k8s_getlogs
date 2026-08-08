@@ -51,7 +51,6 @@ class CollectPage(QWidget):
         super().__init__(parent)
         self._worker = None
         self.metas = []
-        self._date_name = datetime.datetime.now().strftime("%Y-%m-%d")
 
         root = QVBoxLayout(self)
         self.selector = HostNamespaceSelector(hosts_provider, self)
@@ -116,7 +115,7 @@ class CollectPage(QWidget):
         self.cancel_btn.clicked.connect(self._cancel)
         self.all_radio.toggled.connect(lambda _: self._update_pod_state())
         self.deploy_combo.currentTextChanged.connect(self._on_deploy_changed)
-        self.search_edit.textChanged.connect(self._filter_pods)
+        self.search_edit.textChanged.connect(lambda _t: self._update_visibility())
 
         cfg = load_config()
         self.out_dir = Path(cfg.get("output_dir") or str(Path.cwd() / "output"))
@@ -159,9 +158,6 @@ class CollectPage(QWidget):
         self.deploy_combo.blockSignals(False)
         self._update_visibility()
         self.log_panel.append_log(f"命名空间 {ns} 共加载 {len(self.metas)} 个 Pod")
-
-    def _filter_pods(self, text):
-        self._update_visibility()
 
     def _update_visibility(self):
         """按关键字 + 部署名筛选可见 Pod（仅隐藏不匹配行，不影响勾选状态）。"""
@@ -222,7 +218,9 @@ class CollectPage(QWidget):
         by_name = {pm.name: pm for pm in self.metas}
         tasks = [CollectTask(pod_name=n, deploy_name=by_name[n].deploy_name,
                              namespace=ns, pattern=pattern) for n in pod_names]
-        date_dir = self.out_dir / self._date_name
+        # 快照采集开始时刻的日期，应用跨午夜时避免落到昨天的目录
+        self._date = datetime.datetime.now().strftime("%Y-%m-%d")
+        date_dir = self.out_dir / self._date
         date_dir.mkdir(parents=True, exist_ok=True)
         self.progress.setRange(0, len(tasks))
         self.progress.setValue(0)
@@ -241,7 +239,7 @@ class CollectPage(QWidget):
             return SSHClient(host.ip, host.port, host.username, host.password).connect()
 
         self._worker = _CollectWorker(
-            tasks, self.metas, self.out_dir / self._date_name, ns, _factory, self)
+            tasks, self.metas, self.out_dir / self._date, ns, _factory, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.error.connect(self._on_worker_error)
@@ -260,9 +258,9 @@ class CollectPage(QWidget):
         # 使用开始采集时的快照，避免采集期间用户切换命名空间/类别导致 manifest 与压缩包命名漂移
         ns = self._ns
         category = self._category
-        manifest_path = self.out_dir / self._date_name / "pods_manifest.json"
+        manifest_path = self.out_dir / self._date / "pods_manifest.json"
         write_manifest(manifest_path, ns, metas, results)
-        zip_path = zip_output(self.out_dir, self._date_name, ns, category)
+        zip_path = zip_output(self.out_dir, self._date, ns, category)
         self.log_panel.append_log(
             f"完成：成功 {summary.ok} / 跳过 {summary.skipped} / 失败 {summary.failed}")
         self.log_panel.append_log(f"压缩包：{zip_path}")

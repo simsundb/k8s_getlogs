@@ -107,7 +107,8 @@ class AnalyzePage(QWidget):
         self.table.itemDoubleClicked.connect(self._show_detail)
         root.addWidget(self.table, 1)
 
-        self.selector.namespacesLoaded.connect(lambda _n: self._load_pods())
+        # 命名空间下拉切换/加载时重载 Pod 元数据（与采集页一致，避免表格停留在旧命名空间）
+        self.selector.ns_combo.currentIndexChanged.connect(lambda _i: self._load_pods())
         self.selector.connectionFailed.connect(self._on_connection_failed)
         self.query_btn.clicked.connect(self._apply_query)
         self.clear_btn.clicked.connect(self._clear_conditions)
