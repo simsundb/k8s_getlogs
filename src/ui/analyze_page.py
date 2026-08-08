@@ -1,12 +1,16 @@
 import json
 from collections import Counter
 
+from PySide6.QtCharts import (QBarCategoryAxis, QBarSet, QChart, QChartView,
+                              QHorizontalBarSeries, QValueAxis)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
                                QDialogButtonBox, QGroupBox, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QPushButton, QSplitter, QTableWidget,
+                               QTableWidgetItem, QTextEdit, QVBoxLayout,
+                               QWidget)
 
 from ..k8s_client import get_pods_meta
 from ..models import PodMeta
@@ -40,6 +44,47 @@ def _field_value(pm: PodMeta, field: str) -> str:
     return ""
 
 
+def _searchable_text(pm: PodMeta) -> str:
+    """拼接全部可检索字段值（含标签/注解值），供关键字全字段包含匹配。"""
+    parts = [_field_value(pm, f) for f in FILTER_FIELDS]
+    parts.extend(pm.labels.values())
+    parts.extend(pm.annotations.values())
+    return " ".join(parts).lower()
+
+
+def _describe_meta(pm: PodMeta) -> str:
+    """生成明细对话框的中文字段说明：关键字段 + 值 + 简短提示。"""
+    s = pm.summary()
+    full = pm.full_json
+    spec = full.get("spec", {})
+    containers = spec.get("containers", [])
+    image = containers[0].get("image", "") if containers else ""
+    status = pm.status or full.get("status", {}).get("phase", "(未知)")
+    env_names = []
+    for c in containers:
+        for e in c.get("env", []):
+            if e.get("name"):
+                env_names.append(e["name"])
+    labels = pm.labels or full.get("metadata", {}).get("labels", {})
+    annotations = pm.annotations or full.get("metadata", {}).get("annotations", {})
+    lines = [
+        f"名称       ：{pm.name}",
+        f"命名空间   ：{pm.namespace}",
+        f"所属部署名 ：{pm.deploy_name}   （注解 deployName，用于按部署分组抓取日志）",
+        f"所在节点   ：{pm.node or '(未知)'}",
+        f"Pod IP    ：{pm.pod_ip or '(未分配)'}",
+        f"启动时间   ：{s['startTime'] or '(未知)'}",
+        f"重启次数   ：{s['restartCount']}   （0 = 从未重启；>0 且持续增长通常为崩溃循环）",
+        f"运行状态   ：{status}",
+        f"镜像       ：{image or '(未知)'}",
+    ]
+    if env_names:
+        lines.append(f"环境变量   ：{', '.join(env_names)}")
+    lines.append(f"标签       ：{len(labels)} 项键值对（见下方完整 JSON）")
+    lines.append(f"注解       ：{len(annotations)} 项（含 uuid、deployName 等平台元数据）")
+    return "\n".join(lines)
+
+
 class AnalyzePage(QWidget):
     def __init__(self, hosts_provider, parent=None):
         super().__init__(parent)
@@ -67,6 +112,7 @@ class AnalyzePage(QWidget):
             self.cond_rows.append((field, op, value))
         btn_row = QHBoxLayout()
         self.query_btn = QPushButton("查询")
+        self.query_btn.setProperty("primary", True)
         self.clear_btn = QPushButton("清空条件")
         btn_row.addWidget(self.query_btn)
         btn_row.addWidget(self.clear_btn)
@@ -79,19 +125,30 @@ class AnalyzePage(QWidget):
         grp_row.addWidget(QLabel("分组字段:"))
         self.group_combo = QComboBox()
         self.group_combo.addItems(["node", "project", "deployName", "image", "status"])
+        self.group_combo.setMinimumWidth(140)
         grp_row.addWidget(self.group_combo)
         self.group_btn = QPushButton("统计")
+        self.group_btn.setProperty("primary", True)
         grp_row.addWidget(self.group_btn)
         grp_row.addWidget(QLabel("结果:"))
         self.group_result = QLabel("")
         grp_row.addWidget(self.group_result, 1)
         root.addLayout(grp_row)
 
+        # 分组统计图形（QtCharts 横向条形图，点「统计」后展示）
+        self.chart_view = QChartView()
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.chart_view.setMinimumHeight(200)
+        self.chart_view.setVisible(False)
+        root.addWidget(self.chart_view)
+
         # 关键字搜索
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("关键字搜索:"))
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("匹配 deployName/image/node/project/pod...")
+        self.search_edit.setPlaceholderText(
+            "全字段包含匹配：部署名/Pod/IP/镜像/项目/节点/状态/标签/注解...")
+        self.search_edit.setMinimumWidth(240)
         search_row.addWidget(self.search_edit, 1)
         self.search_btn = QPushButton("搜索")
         search_row.addWidget(self.search_btn)
@@ -132,6 +189,8 @@ class AnalyzePage(QWidget):
         self.metas = []
         self.table.setRowCount(0)
         self.group_result.setText("")
+        self.chart_view.setChart(None)
+        self.chart_view.setVisible(False)
 
     def _on_connection_failed(self, _message):
         self._clear_data()
@@ -153,9 +212,7 @@ class AnalyzePage(QWidget):
                      if self._match(pm, field.currentText(), op.currentText(), text)]
         kw = self.search_edit.text().strip().lower()
         if kw:
-            metas = [pm for pm in metas
-                     if any(kw in _field_value(pm, f).lower()
-                            for f in ["deployName", "image", "node", "project", "pod"])]
+            metas = [pm for pm in metas if kw in _searchable_text(pm)]
         self._fill_table(metas)
 
     def _match(self, pm, field, op, text):
@@ -180,20 +237,71 @@ class AnalyzePage(QWidget):
         counter = Counter(_field_value(pm, field) or "(空)" for pm in self.metas)
         top = counter.most_common(8)
         self.group_result.setText("  ".join(f"{k}: {n}" for k, n in top))
+        self._render_group_chart(top, field)
+
+    def _render_group_chart(self, counts, field):
+        """把分组计数画成横向条形图；counts 为空时隐藏图表区。"""
+        if not counts:
+            self.chart_view.setChart(None)
+            self.chart_view.setVisible(False)
+            return
+        series = QHorizontalBarSeries()
+        barset = QBarSet("数量")
+        barset.setColor(QColor("#3b6fc4"))
+        for _name, n in counts:
+            barset.append(n)
+        series.append(barset)
+
+        chart = QChart()
+        chart.setTitle(f"{field} 分组分布（Top {len(counts)}）")
+        chart.addSeries(series)
+
+        axis_y = QBarCategoryAxis()
+        axis_y.append([name for name, _n in counts])
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        axis_x = QValueAxis()
+        axis_x.setLabelFormat("%d")
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        chart.legend().setVisible(False)
+        chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
+        chart.setBackgroundBrush(QBrush(QColor("#ffffff")))
+        self.chart_view.setChart(chart)
+        self.chart_view.setVisible(True)
 
     def _show_detail(self, item):
         pm = item.data(Qt.UserRole)
         if not pm:
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle(pm.name)
+        dlg.setWindowTitle(f"Pod 明细：{pm.name}")
+        dlg.resize(780, 640)
         lay = QVBoxLayout(dlg)
-        text = QPlainTextEdit()
-        text.setReadOnly(True)
-        text.setPlainText(json.dumps(pm.full_json, ensure_ascii=False, indent=2))
-        lay.addWidget(text)
+
+        tip = QLabel("关键元数据说明见上方；完整原始 JSON 在下方只读区。")
+        tip.setStyleSheet("color: #6a7380;")
+        lay.addWidget(tip)
+
+        desc = QTextEdit()
+        desc.setReadOnly(True)
+        desc.setPlainText(_describe_meta(pm))
+
+        raw = QPlainTextEdit()
+        raw.setReadOnly(True)
+        raw.setPlainText(json.dumps(pm.full_json, ensure_ascii=False, indent=2))
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(desc)
+        splitter.addWidget(raw)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([240, 400])
+        lay.addWidget(splitter, 1)
+
         box = QDialogButtonBox(QDialogButtonBox.Close)
         box.rejected.connect(dlg.reject)
         lay.addWidget(box)
-        dlg.resize(720, 560)
         dlg.exec()

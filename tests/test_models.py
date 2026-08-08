@@ -1,4 +1,5 @@
-from src.models import NO_MATCH_ERROR, CollectResult, CollectSummary, PodMeta
+from src.models import (NO_MATCH_ERROR, CollectResult, CollectSummary, PodMeta,
+                        human_size)
 
 
 def test_podmeta_summary_extracts_key_fields():
@@ -23,7 +24,27 @@ def test_podmeta_summary_extracts_key_fields():
 def test_collect_result_defaults():
     r = CollectResult(pod_name="p1", ok=True)
     assert r.file_count == 0
+    assert r.total_bytes == 0
     assert r.error == ""
+
+
+def test_human_size():
+    assert human_size(0) == "0 B"
+    assert human_size(128) == "128 B"
+    assert human_size(1536) == "1.5 KB"
+    assert human_size(5 * 1024 * 1024) == "5.0 MB"
+    assert human_size(3 * 1024 * 1024 * 1024) == "3.0 GB"
+
+
+def test_collect_summary_total_bytes():
+    s = CollectSummary.build([
+        CollectResult(pod_name="p1", ok=True, total_bytes=1000),
+        CollectResult(pod_name="p2", ok=True, total_bytes=500),
+        CollectResult(pod_name="p3", ok=False, error="boom"),
+    ])
+    assert s.ok == 2
+    assert s.failed == 1
+    assert s.total_bytes == 1500  # 只统计成功采集的日志字节
 
 
 def test_podmeta_summary_missing_spec_containers_gives_empty_image():

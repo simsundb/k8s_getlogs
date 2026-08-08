@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
 from ..collector import Collector, write_manifest, zip_output
 from ..config import load_config, save_config
 from ..k8s_client import PATTERN_MAP, get_pods_meta
-from ..models import CollectSummary, CollectTask
+from ..models import CollectSummary, CollectTask, human_size
 from ..ssh_client import SSHClient
 from .host_ns_selector import HostNamespaceSelector
 from .log_panel import LogPanel
@@ -75,10 +75,12 @@ class CollectPage(QWidget):
         mode_row.addWidget(QLabel("部署名:"))
         self.deploy_combo = QComboBox()
         self.deploy_combo.addItem("全部")
+        self.deploy_combo.setMinimumWidth(150)
         mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索 Pod 名 / 部署名...")
+        self.search_edit.setMinimumWidth(220)
         mode_row.addWidget(self.search_edit)
         pod_layout.addLayout(mode_row)
         self.pod_list = QListWidget()
@@ -90,9 +92,11 @@ class CollectPage(QWidget):
         cat_row.addWidget(QLabel("日志类别:"))
         self.cat_combo = QComboBox()
         self.cat_combo.addItems(list(PATTERN_MAP.keys()))
+        self.cat_combo.setMinimumWidth(150)
         cat_row.addWidget(self.cat_combo)
         cat_row.addStretch(1)
         self.start_btn = QPushButton("开始采集")
+        self.start_btn.setProperty("primary", True)
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.setEnabled(False)
         cat_row.addWidget(self.start_btn)
@@ -247,7 +251,9 @@ class CollectPage(QWidget):
 
     def _on_progress(self, result):
         if result.ok:
-            self.log_panel.append_log(f"  ✓ {result.pod_name}：{result.file_count} 个文件")
+            self.log_panel.append_log(
+                f"  ✓ {result.pod_name}：{result.file_count} 个文件，"
+                f"{human_size(result.total_bytes)}")
         else:
             self.log_panel.append_log(f"  - {result.pod_name}：{result.error}")
         self.progress.setValue(self.progress.value() + 1)
@@ -262,7 +268,9 @@ class CollectPage(QWidget):
         write_manifest(manifest_path, ns, metas, results)
         zip_path = zip_output(self.out_dir, self._date, ns, category)
         self.log_panel.append_log(
-            f"完成：成功 {summary.ok} / 跳过 {summary.skipped} / 失败 {summary.failed}")
+            f"汇总：共 {summary.total} 个 Pod，成功 {summary.ok}，"
+            f"失败 {summary.failed}，跳过 {summary.skipped}，"
+            f"日志总大小 {human_size(summary.total_bytes)}")
         self.log_panel.append_log(f"压缩包：{zip_path}")
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.out_dir)))
         self._worker = None

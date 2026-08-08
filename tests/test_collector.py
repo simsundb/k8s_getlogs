@@ -55,8 +55,9 @@ def test_extract_tar(tmp_path):
     tar = tmp_path / "p.tar.gz"
     fake.stream_to_file("ignored", tar)
     dest = tmp_path / "dest"
-    n = extract_tar(tar, dest)
-    assert n == 2
+    count, total = extract_tar(tar, dest)
+    assert count == 2
+    assert total == 6  # "aaa"(3) + "bbb"(3) 的未压缩字节数
     assert (dest / "a.log").read_text() == "aaa"
 
 

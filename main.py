@@ -5,11 +5,13 @@ from PySide6.QtWidgets import QApplication
 from src.config import APP_DIR
 from src.logger import setup_logging
 from src.ui.main_window import MainWindow
+from src.ui.style import APP_STYLE
 
 
 def main():
     setup_logging(APP_DIR / "logs")
     app = QApplication(sys.argv)
+    app.setStyleSheet(APP_STYLE)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

@@ -15,19 +15,22 @@ from .models import NO_MATCH_ERROR, CollectResult, CollectTask, PodMeta
 log = logging.getLogger("collector")
 
 
-def extract_tar(tar_path: Path, dest_dir: Path) -> int:
-    """把 tar.gz 解压到 dest_dir，返回其中普通文件数。
+def extract_tar(tar_path: Path, dest_dir: Path) -> tuple[int, int]:
+    """把 tar.gz 解压到 dest_dir，返回 (普通文件数, 文件总字节数)。
 
     filter="data" 拒绝路径穿越等危险成员，同时消除 Python 3.14 弃用警告。
+    总字节数取 tar 记录的各文件 size 之和（等于实际落盘日志大小）。
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     count = 0
+    total = 0
     with tarfile.open(tar_path, "r:gz") as tf:
         for member in tf.getmembers():
             if member.isreg():
                 count += 1
+                total += member.size
         tf.extractall(dest_dir, filter="data")
-    return count
+    return count, total
 
 
 def write_manifest(
@@ -44,11 +47,13 @@ def write_manifest(
         entry = pm.summary()
         entry["collected"] = r.ok if r else False
         entry["fileCount"] = r.file_count if r else 0
+        entry["totalBytes"] = r.total_bytes if r else 0
         entry["fullJson"] = pm.full_json
         pods.append(entry)
     data = {
         "collectedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "namespace": namespace,
+        "totalBytes": sum(r.total_bytes for r in results if r.ok),
         "pods": pods,
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -113,8 +118,11 @@ class Collector:
                             task.pod_name, False, error=NO_MATCH_ERROR
                         )
                     else:
-                        extract_tar(tar_path, target_dir)
-                        result = CollectResult(task.pod_name, True, file_count=count)
+                        _count, total_bytes = extract_tar(tar_path, target_dir)
+                        result = CollectResult(
+                            task.pod_name, True, file_count=_count,
+                            total_bytes=total_bytes,
+                        )
                 except Exception as e:
                     log.warning("Pod %s 采集失败: %s", task.pod_name, e)
                     result = CollectResult(task.pod_name, False, error=str(e))

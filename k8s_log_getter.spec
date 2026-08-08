@@ -19,9 +19,11 @@ ENTRY = "main.py"
 from PyInstaller.utils.hooks import collect_all
 
 pyside_datas, pyside_bins, pyside_hidden = collect_all("PySide6")
-datas = pyside_datas
-binaries = pyside_bins
-hiddenimports = pyside_hidden + [
+# ③ 页分组统计使用 QtCharts（PySide6 自带模块，但冻结包需单独收集其插件数据）
+charts_datas, charts_bins, charts_hidden = collect_all("PySide6.QtCharts")
+datas = pyside_datas + charts_datas
+binaries = pyside_bins + charts_bins
+hiddenimports = pyside_hidden + charts_hidden + [
     # paramiko 依赖的底层库一般能被静态检测到；若打包后运行报缺模块，取消下面注释重新打包
     # "cryptography",
     # "nacl",

@@ -66,6 +66,7 @@ class HostPage(QWidget):
 
         btn_row = QHBoxLayout()
         self.add_btn = QPushButton("新增")
+        self.add_btn.setProperty("primary", True)
         self.update_btn = QPushButton("更新")
         self.del_btn = QPushButton("删除")
         btn_row.addWidget(self.add_btn)
