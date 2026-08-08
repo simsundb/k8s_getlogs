@@ -1,5 +1,9 @@
+"""K8S 日志采集工具共享数据模型。"""
+
 from dataclasses import dataclass, field
-from typing import Dict, List
+
+NO_MATCH_ERROR = "无匹配日志"
+
 
 @dataclass
 class HostConfig:
@@ -8,6 +12,7 @@ class HostConfig:
     password: str = ""
     port: int = 22
     remark: str = ""
+
 
 @dataclass
 class PodMeta:
@@ -19,8 +24,8 @@ class PodMeta:
     pod_ip: str = ""
     restart_count: int = 0
     status: str = ""
-    labels: Dict[str, str] = field(default_factory=dict)
-    annotations: Dict[str, str] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)
+    annotations: dict[str, str] = field(default_factory=dict)
     full_json: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
@@ -37,12 +42,14 @@ class PodMeta:
             "restartCount": self.restart_count,
         }
 
+
 @dataclass
 class CollectTask:
     pod_name: str
     deploy_name: str
     namespace: str
     pattern: str
+
 
 @dataclass
 class CollectResult:
@@ -51,21 +58,22 @@ class CollectResult:
     file_count: int = 0
     error: str = ""
 
+
 @dataclass
 class CollectSummary:
     total: int = 0
     ok: int = 0
     skipped: int = 0
     failed: int = 0
-    results: List[CollectResult] = field(default_factory=list)
+    results: list[CollectResult] = field(default_factory=list)
 
     @classmethod
-    def build(cls, results: List[CollectResult]) -> "CollectSummary":
+    def build(cls, results: list[CollectResult]) -> "CollectSummary":
         s = cls(total=len(results), results=results)
         for r in results:
             if r.ok:
                 s.ok += 1
-            elif r.error == "无匹配日志":
+            elif r.error == NO_MATCH_ERROR:
                 s.skipped += 1
             else:
                 s.failed += 1
