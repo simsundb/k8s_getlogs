@@ -70,7 +70,8 @@ def collect_pod_tar(client, namespace: str, pod: str, pattern: str, target_path:
     code = client.stream_to_file(cmd, target_path)
     if code != 0:
         target_path.unlink(missing_ok=True)  # 清理失败残留的半成品 tar
-        raise RuntimeError(f"tar 拉取失败(exit={code})")
+        stderr = getattr(client, "last_stderr", "").strip()
+        raise RuntimeError(f"tar 拉取失败(exit={code}): {cmd}" + (f" | {stderr}" if stderr else ""))
     if target_path.stat().st_size == 0:
         return 0
     return count_tar_files(target_path)
