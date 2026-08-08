@@ -3,6 +3,7 @@ import json
 import logging
 import tarfile
 import zipfile
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -15,18 +16,26 @@ log = logging.getLogger("collector")
 
 
 def extract_tar(tar_path: Path, dest_dir: Path) -> int:
-    """把 tar.gz 解压到 dest_dir，返回其中普通文件数。"""
+    """把 tar.gz 解压到 dest_dir，返回其中普通文件数。
+
+    filter="data" 拒绝路径穿越等危险成员，同时消除 Python 3.14 弃用警告。
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     count = 0
     with tarfile.open(tar_path, "r:gz") as tf:
         for member in tf.getmembers():
             if member.isreg():
                 count += 1
-        tf.extractall(dest_dir)
+        tf.extractall(dest_dir, filter="data")
     return count
 
 
-def write_manifest(path: Path, namespace: str, metas: list[PodMeta], results: list[CollectResult]) -> None:
+def write_manifest(
+    path: Path,
+    namespace: str,
+    metas: list[PodMeta],
+    results: list[CollectResult],
+) -> None:
     """写 pods_manifest.json：Pod 摘要 + 采集状态。结果按 pod_name 关联。"""
     result_map = {r.pod_name: r for r in results}
     pods = []
@@ -45,8 +54,13 @@ def write_manifest(path: Path, namespace: str, metas: list[PodMeta], results: li
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def zip_output(output_base: Path, date_dir_name: str, namespace: str, category: str) -> Path:
-    """把 <output_base>/<date_dir_name> 打成 <output_base>/<date>-<ns>-<category>.zip，返回 zip 路径。"""
+def zip_output(
+    output_base: Path,
+    date_dir_name: str,
+    namespace: str,
+    category: str,
+) -> Path:
+    """把 <output_base>/<date_dir_name> 打成 <output_base>/<date>-<ns>-<category>.zip。"""
     source = output_base / date_dir_name
     target = output_base / f"{date_dir_name}-{namespace}-{category}.zip"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -59,40 +73,65 @@ def zip_output(output_base: Path, date_dir_name: str, namespace: str, category: 
 class Collector:
     """并发采集器：每个任务独立创建 SSH 连接，线程池并行拉取日志。"""
 
-    def __init__(self, ssh_factory, output_base: Path, max_workers: int = 4):
+    def __init__(self, ssh_factory: Callable, output_base: Path, max_workers: int = 4):
         self.ssh_factory = ssh_factory
         self.output_base = output_base
         self.max_workers = max_workers
 
-    def run(self, tasks: list[CollectTask], on_progress=None, cancel: Event = None) -> list[CollectResult]:
-        """并行执行所有任务。on_progress 在工作线程内回调，UI 层需自行 marshaling 到主线程。"""
+    def run(
+        self,
+        tasks: list[CollectTask],
+        on_progress: Callable | None = None,
+        cancel: Event | None = None,
+    ) -> list[CollectResult]:
+        """并行执行所有任务。
+
+        on_progress 在工作线程内回调（UI 层需自行 marshaling 到主线程），
+        回调自身异常会被记录而不会中断采集。
+        """
         cancel = cancel or Event()
 
         def worker(task: CollectTask) -> CollectResult:
             if cancel.is_set():
-                return CollectResult(task.pod_name, False, error="已取消")
-            client = None
-            try:
-                client = self.ssh_factory()
-                target_dir = self.output_base / task.namespace / task.deploy_name / task.pod_name
-                target_dir.mkdir(parents=True, exist_ok=True)
-                tar_path = target_dir / "_tmp.tar.gz"
-                count = collect_pod_tar(client, task.namespace, task.pod_name, task.pattern, tar_path)
-                if count == 0:
-                    tar_path.unlink(missing_ok=True)
-                    result = CollectResult(task.pod_name, False, error=NO_MATCH_ERROR)
-                else:
-                    extract_tar(tar_path, target_dir)
-                    tar_path.unlink(missing_ok=True)
-                    result = CollectResult(task.pod_name, True, file_count=count)
-            except Exception as e:
-                log.warning("Pod %s 采集失败: %s", task.pod_name, e)
-                result = CollectResult(task.pod_name, False, error=str(e))
-            finally:
-                if client:
-                    client.close()
+                result = CollectResult(task.pod_name, False, error="已取消")
+            else:
+                client = None
+                tar_path = None
+                try:
+                    client = self.ssh_factory()
+                    target_dir = (
+                        self.output_base / task.namespace / task.deploy_name
+                        / task.pod_name
+                    )
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    tar_path = target_dir / "_tmp.tar.gz"
+                    count = collect_pod_tar(
+                        client, task.namespace, task.pod_name, task.pattern, tar_path
+                    )
+                    if count == 0:
+                        result = CollectResult(
+                            task.pod_name, False, error=NO_MATCH_ERROR
+                        )
+                    else:
+                        extract_tar(tar_path, target_dir)
+                        result = CollectResult(task.pod_name, True, file_count=count)
+                except Exception as e:
+                    log.warning("Pod %s 采集失败: %s", task.pod_name, e)
+                    result = CollectResult(task.pod_name, False, error=str(e))
+                finally:
+                    # 无论成功/失败都清理临时 tar，避免残留 _tmp.tar.gz 被打进 zip
+                    if tar_path is not None:
+                        tar_path.unlink(missing_ok=True)
+                    if client:
+                        try:
+                            client.close()
+                        except Exception:
+                            log.warning("Pod %s SSH 关闭异常", task.pod_name, exc_info=True)
             if on_progress:
-                on_progress(result)
+                try:
+                    on_progress(result)
+                except Exception:
+                    log.exception("on_progress 回调异常")
             return result
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:

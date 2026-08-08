@@ -25,6 +25,21 @@ class _FakeSSH:
         pass
 
 
+class _CorruptStreamClient:
+    """stream_to_file 写入损坏的 tar 数据，模拟下载后解析失败（count_tar_files 抛错）。"""
+
+    def __init__(self, payload=b"not a gzip"):
+        self.payload = payload
+        self.closed = False
+
+    def stream_to_file(self, command, filepath, timeout=600):
+        Path(filepath).write_bytes(self.payload)
+        return 0
+
+    def close(self):
+        self.closed = True
+
+
 def _make_source(root: Path, files: dict) -> Path:
     src = root / "opt_logs"
     for rel, content in files.items():
@@ -92,6 +107,41 @@ def test_collector_ssh_error_returns_error_result(tmp_path):
     results = collector.run([task], cancel=Event())
     assert results[0].ok is False
     assert "连接失败" in results[0].error
+
+
+def test_collector_corrupt_tar_cleans_tmp_and_closes(tmp_path):
+    fake = _CorruptStreamClient()
+    collector = Collector(lambda: fake, tmp_path / "output", max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+    results = collector.run([task], cancel=Event())
+    assert results[0].ok is False
+    assert results[0].error != ""
+    # 损坏 tar 导致解析失败，_tmp.tar.gz 必须被清理，SSH 连接必须被关闭
+    assert not (tmp_path / "output" / "ns" / "app" / "podX" / "_tmp.tar.gz").exists()
+    assert fake.closed is True
+
+
+def test_collector_cancel_fires_on_progress(tmp_path):
+    collector = Collector(lambda: None, tmp_path / "output", max_workers=1)
+    cancel = Event()
+    cancel.set()
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+    progress = []
+    results = collector.run([task], on_progress=progress.append, cancel=cancel)
+    assert len(progress) == 1
+    assert progress[0].error == "已取消"
+
+
+def test_collector_on_progress_raise_does_not_abort(tmp_path):
+    src = _make_source(tmp_path, {"a.log": "x"})
+    collector = Collector(lambda: _FakeSSH(src), tmp_path / "output", max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+
+    def bad_callback(result):
+        raise RuntimeError("UI 崩了")
+
+    results = collector.run([task], on_progress=bad_callback, cancel=Event())
+    assert results[0].ok is True
 
 
 def test_collector_on_progress_fires_per_task(tmp_path):
