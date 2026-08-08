@@ -1,0 +1,74 @@
+# tests/test_collect_deploy.py
+"""采集页「按部署名选择」：选中部署名 → 采集该部署名下全部 Pod（可能多个）。"""
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+from PySide6.QtWidgets import QApplication
+
+from src.models import PodMeta
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+def _build_page(app, monkeypatch, tmp_path, metas):
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
+    from src.ui.collect_page import CollectPage
+
+    monkeypatch.setattr("src.ui.collect_page.get_pods_meta", lambda _client, _ns: metas)
+    page = CollectPage(lambda: [])
+    page.selector.ns_combo.addItem("ns")
+    page.selector.ns_combo.setCurrentIndex(0)   # 触发 currentIndexChanged → _load_pods()
+    return page
+
+
+def test_deploy_combo_populated_from_metas(app, monkeypatch, tmp_path):
+    metas = [
+        PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+        PodMeta(name="ppl2-b", namespace="ns", deploy_name="ppl2"),
+        PodMeta(name="web-0", namespace="ns", deploy_name="web"),
+    ]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
+        items = [page.deploy_combo.itemText(i) for i in range(page.deploy_combo.count())]
+        assert items[0] == "全部"
+        assert items[1:] == ["ppl2", "web"]
+    finally:
+        page.deleteLater()
+
+
+def test_select_deploy_name_collects_all_its_pods(app, monkeypatch, tmp_path):
+    """选中的是部署名：返回该部署名下全部 Pod（ppl2-a 与 ppl2-b 同属 ppl2）。"""
+    metas = [
+        PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+        PodMeta(name="ppl2-b", namespace="ns", deploy_name="ppl2"),
+        PodMeta(name="web-0", namespace="ns", deploy_name="web"),
+    ]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
+        page.deploy_combo.setCurrentText("ppl2")
+        assert page._selected_pods() == ["ppl2-a", "ppl2-b"]
+    finally:
+        page.deleteLater()
+
+
+def test_deploy_all_restores_full_scope(app, monkeypatch, tmp_path):
+    metas = [
+        PodMeta(name="ppl2-a", namespace="ns", deploy_name="ppl2"),
+        PodMeta(name="web-0", namespace="ns", deploy_name="web"),
+    ]
+    page = _build_page(app, monkeypatch, tmp_path, metas)
+    try:
+        page.deploy_combo.setCurrentText("ppl2")
+        assert page._selected_pods() == ["ppl2-a"]
+
+        # 回到「全部」：默认「全部 Pod」模式恢复整个命名空间范围
+        page.deploy_combo.setCurrentText("全部")
+        page.all_radio.setChecked(True)
+        assert set(page._selected_pods()) == {"ppl2-a", "web-0"}
+    finally:
+        page.deleteLater()

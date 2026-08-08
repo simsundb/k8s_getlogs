@@ -73,6 +73,10 @@ class CollectPage(QWidget):
         self.all_radio.setChecked(True)
         mode_row.addWidget(self.all_radio)
         mode_row.addWidget(self.pick_radio)
+        mode_row.addWidget(QLabel("部署名:"))
+        self.deploy_combo = QComboBox()
+        self.deploy_combo.addItem("全部")
+        mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索 Pod 名 / 部署名...")
@@ -111,6 +115,7 @@ class CollectPage(QWidget):
         self.start_btn.clicked.connect(self.start_collect)
         self.cancel_btn.clicked.connect(self._cancel)
         self.all_radio.toggled.connect(lambda _: self._update_pod_state())
+        self.deploy_combo.currentTextChanged.connect(self._on_deploy_changed)
         self.search_edit.textChanged.connect(self._filter_pods)
 
         cfg = load_config()
@@ -139,19 +144,46 @@ class CollectPage(QWidget):
             self._on_error(f"加载 Pod 失败: {e}")
             return
         self.pod_list.clear()
+        # 重建部署名下拉（含「全部」）；blockSignals 避免重建过程触发按部署名筛选
+        self.deploy_combo.blockSignals(True)
+        self.deploy_combo.clear()
+        self.deploy_combo.addItem("全部")
         for pm in self.metas:
             item = QListWidgetItem(f"[{pm.deploy_name}]  {pm.name}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             item.setData(Qt.UserRole, pm.name)
+            item.setData(Qt.UserRole + 1, pm.deploy_name)   # 部署名，供按部署名筛选/定位
             self.pod_list.addItem(item)
+        self.deploy_combo.addItems(sorted({pm.deploy_name for pm in self.metas}))
+        self.deploy_combo.blockSignals(False)
+        self._update_visibility()
         self.log_panel.append_log(f"命名空间 {ns} 共加载 {len(self.metas)} 个 Pod")
 
     def _filter_pods(self, text):
-        text = text.strip().lower()
+        self._update_visibility()
+
+    def _update_visibility(self):
+        """按关键字 + 部署名筛选可见 Pod（仅隐藏不匹配行，不影响勾选状态）。"""
+        text = self.search_edit.text().strip().lower()
+        deploy = self.deploy_combo.currentText()
         for i in range(self.pod_list.count()):
             item = self.pod_list.item(i)
-            item.setHidden(bool(text) and text not in item.text().lower())
+            hidden = bool(text and text not in item.text().lower())
+            if deploy != "全部" and item.data(Qt.UserRole + 1) != deploy:
+                hidden = True
+            item.setHidden(hidden)
+
+    def _on_deploy_changed(self, deploy):
+        """选中具体部署名：切到手动勾选并勾选该部署下全部 Pod 作为预览；
+        实际采集集由 _selected_pods 按部署名确定，保证「选部署名=采集该部署全部 Pod」。"""
+        if deploy != "全部":
+            self.pick_radio.setChecked(True)
+            for i in range(self.pod_list.count()):
+                item = self.pod_list.item(i)
+                if item.data(Qt.UserRole + 1) == deploy:
+                    item.setCheckState(Qt.Checked)
+        self._update_visibility()
 
     def _update_pod_state(self):
         pick = self.pick_radio.isChecked()
@@ -161,6 +193,10 @@ class CollectPage(QWidget):
                           else item.flags() & ~Qt.ItemIsUserCheckable)
 
     def _selected_pods(self):
+        deploy = self.deploy_combo.currentText()
+        if deploy != "全部":
+            # 选中的是部署名：取该部署名下的全部 Pod（可能多个 Pod 同属一个部署名）
+            return [pm.name for pm in self.metas if pm.deploy_name == deploy]
         if self.all_radio.isChecked():
             return [pm.name for pm in self.metas]
         return [self.pod_list.item(i).data(Qt.UserRole)

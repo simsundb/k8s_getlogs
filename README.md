@@ -5,7 +5,7 @@ PySide6 + paramiko 实现的 K8S 日志工具（Windows / macOS）。
 ## 三页面
 
 1. **① 主机配置**：SSH 主机增删改、测试连接；密码 base64 存储
-2. **② 日志抓取**：选主机→自动连→命名空间→Pod（全部/勾选）× 日志类别（ALL/hycommon/hyframework）→ 并发采集 → zip + manifest
+2. **② 日志抓取**：选主机→自动连→命名空间→按部署名/全部/勾选选 Pod × 日志类别（ALL/hycommon/hyframework）→ 并发采集 → zip + manifest
 3. **③ 查询分析**：Pod 元数据条件过滤 / 分组统计 / 关键字搜索 / 明细查看
 
 ## 运行
