@@ -1,0 +1,68 @@
+# tests/test_e2e_local.py
+"""本地端到端：模拟 2 个 Pod 的远端日志目录 → 采集 → manifest → zip。"""
+import json
+import tarfile
+import zipfile
+from pathlib import Path
+from threading import Event
+
+from src.collector import Collector, write_manifest, zip_output
+from src.k8s_client import PATTERN_MAP
+from src.models import CollectSummary, CollectTask, PodMeta
+
+
+class _FakeSSH:
+    def __init__(self, source_dir):
+        self.source_dir = source_dir
+
+    def stream_to_file(self, command, filepath, timeout=600):
+        with tarfile.open(filepath, "w:gz") as tf:
+            for p in sorted(self.source_dir.rglob("*")):
+                if p.is_file():
+                    tf.add(p, arcname=p.relative_to(self.source_dir))
+        return 0
+
+    def close(self):
+        pass
+
+
+def test_end_to_end(tmp_path):
+    srcs = {}
+    for pod, files in {
+        "ppl2-a": {"hycommon.log": "one", "hyframework.log": "two"},
+        "ppl2-b": {"hycommon.log": "three"},
+    }.items():
+        d = tmp_path / f"src_{pod}"
+        d.mkdir(parents=True)
+        for name, content in files.items():
+            (d / name).write_text(content, encoding="utf-8")
+        srcs[pod] = d
+
+    factory = iter([_FakeSSH(srcs[p]) for p in ("ppl2-a", "ppl2-b")]).__next__
+    out_base = tmp_path / "output"
+    ns = "3-k251182-default"
+    date_name = "2026-08-08"
+
+    tasks = [CollectTask(pod_name=p, deploy_name="ppl2", namespace=ns,
+                         pattern=PATTERN_MAP["ALL"]) for p in ("ppl2-a", "ppl2-b")]
+    metas = [PodMeta(name=p, namespace=ns, deploy_name="ppl2",
+                     labels={"project": "k251182"}) for p in ("ppl2-a", "ppl2-b")]
+
+    results = Collector(factory, out_base, max_workers=2).run(tasks, cancel=Event())
+    summary = CollectSummary.build(results)
+    assert summary.ok == 2
+
+    # 与真实 UI（collect_page.py 先 mkdir 日期目录）保持一致：write_manifest 不自动建父目录
+    date_dir = out_base / date_name
+    date_dir.mkdir(parents=True, exist_ok=True)
+    write_manifest(date_dir / "pods_manifest.json", ns, metas, results)
+    manifest = json.loads((date_dir / "pods_manifest.json").read_text(encoding="utf-8"))
+    assert len(manifest["pods"]) == 2
+
+    # zip 打包日期目录（含 manifest）；采集日志实际落在 output/<ns>/<deploy>/<pod>（见下方磁盘断言）
+    z = zip_output(out_base, date_name, ns, "ALL")
+    with zipfile.ZipFile(z) as zf:
+        names = zf.namelist()
+        assert any("pods_manifest.json" in n for n in names)
+
+    assert (out_base / ns / "ppl2" / "ppl2-a" / "hycommon.log").exists()
