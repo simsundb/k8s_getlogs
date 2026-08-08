@@ -10,12 +10,15 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-def test_main_window_constructs(app):
+def test_main_window_constructs(app, monkeypatch, tmp_path):
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
     from src.ui.main_window import MainWindow
     win = MainWindow()
     assert win.stack.count() == 3
     assert win.nav.count() == 3
     win.close()
+    win.deleteLater()
 
 
 def test_host_page_add_and_delete(app, monkeypatch, tmp_path):
@@ -31,3 +34,4 @@ def test_host_page_add_and_delete(app, monkeypatch, tmp_path):
     page.table.selectRow(0)
     page.delete_host()
     assert page.table.rowCount() == 0
+    page.deleteLater()
