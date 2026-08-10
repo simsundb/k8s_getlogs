@@ -1,17 +1,19 @@
 # src/ui/collect_page.py
 import datetime
+import logging
 from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import (QBrush, QColor, QDesktopServices, QStandardItem,
                            QStandardItemModel)
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QProgressBar, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGroupBox,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QProgressBar, QPushButton,
+                               QVBoxLayout, QWidget)
 
-from ..collector import Collector, write_manifest, zip_output
-from ..config import load_config, save_config
+from ..collector import Collector, aggregate_logs, write_manifest, zip_output
+from ..config import load_config, save_config, software_dir
 from ..k8s_client import PATTERN_MAP, build_log_pattern, get_pods_meta
 from ..models import DEFAULT_LOG_DIR, CollectSummary, CollectTask, human_size
 from ..ssh_client import SSHClient
@@ -19,6 +21,8 @@ from .host_ns_selector import HostNamespaceSelector
 from .icons import set_icon
 from .log_panel import LogPanel
 from .style import SELECT_BG
+
+log = logging.getLogger("collect_page")
 
 
 class CheckableCombo(QComboBox):
@@ -70,13 +74,17 @@ class _CollectWorker(QThread):
     finished_ok = Signal(object, object, object)  # (results, metas, summary)
     error = Signal(str)
 
-    def __init__(self, tasks, metas, output_base, namespace, ssh_provider, parent=None):
+    def __init__(self, tasks, metas, output_base, namespace, ssh_provider,
+                 aggregate_dir=None, parent=None):
         super().__init__(parent)
         self.tasks = tasks
         self.metas = metas
         self.output_base = output_base
         self.namespace = namespace
         self.ssh_provider = ssh_provider
+        self.aggregate_dir = aggregate_dir
+        self.aggregate = None       # aggregate_logs 结果 dict，成功时不为空
+        self.aggregate_error = ""   # 汇总失败原因
         self.cancel = Event()
 
     def cancel_request(self):
@@ -87,6 +95,12 @@ class _CollectWorker(QThread):
             collector = Collector(self.ssh_provider, self.output_base, max_workers=4)
             results = collector.run(self.tasks, on_progress=self.progress.emit, cancel=self.cancel)
             summary = CollectSummary.build(results)
+            if self.aggregate_dir is not None:
+                try:
+                    self.aggregate = aggregate_logs(self.output_base, self.aggregate_dir)
+                except Exception as e:
+                    log.exception("汇总日志失败")
+                    self.aggregate_error = str(e)
             self.finished_ok.emit(results, self.metas, summary)
         except Exception as e:
             self.error.emit(str(e))
@@ -130,6 +144,16 @@ class CollectPage(QWidget):
         src_row.addWidget(self.log_name_edit)
         src_row.addStretch(1)
         root.addLayout(src_row)
+
+        agg_row = QHBoxLayout()
+        self.aggregate_cb = QCheckBox("采集后汇总日志到软件目录")
+        self.aggregate_cb.setChecked(cfg.get("aggregate_after_collect", True))
+        self.aggregate_cb.setToolTip(
+            "采集完成后把所有 .log 复制到软件目录 logs_collected/<日期>/\n"
+            f"当前软件目录: {software_dir()}")
+        agg_row.addWidget(self.aggregate_cb)
+        agg_row.addStretch(1)
+        root.addLayout(agg_row)
 
         pod_group = QGroupBox("Pod 选择")
         pod_layout = QVBoxLayout(pod_group)
@@ -195,6 +219,7 @@ class CollectPage(QWidget):
         self.choose_btn.clicked.connect(self._choose_dir)
         self.start_btn.clicked.connect(self.start_collect)
         self.cancel_btn.clicked.connect(self._cancel)
+        self.aggregate_cb.toggled.connect(self._on_aggregate_toggled)
         self.deploy_combo.itemsToggled.connect(self._on_deploy_toggled)
         self.search_edit.textChanged.connect(lambda _t: self._update_visibility())
         self.select_all_btn.clicked.connect(self._on_select_all)
@@ -215,6 +240,12 @@ class CollectPage(QWidget):
             data["output_dir"] = str(self.out_dir)
             save_config(data)
             self._update_out_label()
+
+    def _on_aggregate_toggled(self, checked: bool):
+        data = load_config()
+        if bool(data.get("aggregate_after_collect", True)) != bool(checked):
+            data["aggregate_after_collect"] = bool(checked)
+            save_config(data)
 
     def _load_pods(self):
         ns = self.selector.ns_combo.currentText()
@@ -364,11 +395,17 @@ class CollectPage(QWidget):
         self._ns = ns
         self._category = category
 
+        # 采集完成后的汇总目标目录（软件目录/logs_collected/<日期>），仅勾选时启用
+        self._aggregate_dir = None
+        if self.aggregate_cb.isChecked():
+            self._aggregate_dir = software_dir() / "logs_collected" / self._date
+
         def _factory():
             return SSHClient(host.ip, host.port, host.username, host.password).connect()
 
         self._worker = _CollectWorker(
-            tasks, self.metas, self.out_dir / self._date, ns, _factory, self)
+            tasks, self.metas, self.out_dir / self._date, ns, _factory,
+            aggregate_dir=self._aggregate_dir, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.error.connect(self._on_worker_error)
@@ -397,7 +434,18 @@ class CollectPage(QWidget):
             f"失败 {summary.failed}，跳过 {summary.skipped}，"
             f"日志总大小 {human_size(summary.total_bytes)}")
         self.log_panel.append_log(f"压缩包：{zip_path}")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.out_dir)))
+        # 汇总到软件目录的结果（工作线程已复制完成，这里只读结果 + 记日志）
+        worker = self._worker
+        if worker is not None and worker.aggregate:
+            agg = worker.aggregate
+            self.log_panel.append_log(
+                f"已汇总 {agg['files']} 个 .log 到：{agg['dest_dir']}"
+                + (f"（{agg['errors']} 个失败）" if agg["errors"] else ""))
+        elif worker is not None and worker.aggregate_error:
+            self.log_panel.append_log(
+                f"[错误] 汇总失败：{worker.aggregate_error}（已跳过）")
+        open_path = worker.aggregate["dest_dir"] if (worker and worker.aggregate) else self.out_dir
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(open_path)))
         self._worker = None
 
     def _cancel(self):

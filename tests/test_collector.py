@@ -1,10 +1,13 @@
 import json
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
 from threading import Event
 
-from src.collector import Collector, extract_tar, write_manifest, zip_output
+from src.collector import (Collector, aggregate_logs, extract_tar,
+                           write_manifest, zip_output)
+from src.config import software_dir
 from src.models import DEFAULT_LOG_DIR, CollectResult, CollectTask, PodMeta
 
 
@@ -216,3 +219,89 @@ def test_zip_output_contains_manifest(tmp_path):
     with zipfile.ZipFile(z) as zf:
         names = zf.namelist()
         assert any(n.endswith("manifest.json") for n in names)
+
+
+def _make_pod_tree(root: Path, pods: dict) -> Path:
+    """按采集输出布局建目录：root/ns/app/<pod>/<file>。"""
+    for pod, files in pods.items():
+        d = root / "ns" / "app" / pod
+        d.mkdir(parents=True, exist_ok=True)
+        for name, content in files.items():
+            (d / name).write_text(content, encoding="utf-8")
+    return root
+
+
+def test_aggregate_logs_flattens_and_renames(tmp_path):
+    source = _make_pod_tree(tmp_path, {
+        "podA": {"hycommon.log": "one", "err.log": "two"},
+        "podB": {"hycommon.log": "three"},
+    })
+    dest = tmp_path / "agg"
+    stats = aggregate_logs(source, dest)
+    assert stats["files"] == 3
+    assert stats["errors"] == 0
+    assert (dest / "podA_hycommon.log").read_text() == "one"
+    assert (dest / "podA_err.log").read_text() == "two"
+    assert (dest / "podB_hycommon.log").read_text() == "three"
+    assert (source / "ns" / "app" / "podA" / "hycommon.log").exists()  # 源文件保留
+
+
+def test_aggregate_logs_only_log_files(tmp_path):
+    source = _make_pod_tree(tmp_path, {"podA": {"a.log": "x", "a.txt": "y"}})
+    (tmp_path / "ns" / "app" / "podA" / "a.tar.gz").write_bytes(b"z")
+    stats = aggregate_logs(source, tmp_path / "agg")
+    assert stats["files"] == 1
+    assert (tmp_path / "agg" / "podA_a.log").exists()
+    assert not (tmp_path / "agg" / "podA_a.txt").exists()
+
+
+def test_aggregate_logs_collision_suffix(tmp_path):
+    source = _make_pod_tree(tmp_path / "source", {"podA": {"hycommon.log": "a1"}})
+    dest = tmp_path / "agg"
+    # 目标目录里预先放一个同名文件，触发 _1 后缀（dest 须在 source 树之外）
+    dest.mkdir()
+    (dest / "podA_hycommon.log").write_text("old")
+    stats = aggregate_logs(source, dest)
+    assert stats["files"] == 1
+    assert (dest / "podA_hycommon.log").read_text() == "old"      # 原有文件不动
+    assert (dest / "podA_hycommon_1.log").read_text() == "a1"     # 新文件加后缀
+
+
+def test_aggregate_logs_creates_nested_dest(tmp_path):
+    source = _make_pod_tree(tmp_path, {"podA": {"hycommon.log": "x"}})
+    dest = tmp_path / "logs_collected" / "2026-08-10"
+    stats = aggregate_logs(source, dest)
+    assert (dest / "podA_hycommon.log").exists()
+    assert stats["bytes"] > 0
+
+
+def test_software_dir_source_returns_project_root():
+    root = software_dir()
+    assert (root / "main.py").exists()
+    assert (root / "src").is_dir()
+
+
+def test_software_dir_frozen_windows(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(Path, "resolve", lambda self: self)  # 本机非 Windows，避免路径被解析篡改
+    monkeypatch.setattr(sys, "executable", "C:/Tools/K8sLogGetter/K8sLogGetter.exe")
+    assert software_dir() == Path("C:/Tools/K8sLogGetter")
+
+
+def test_software_dir_frozen_macos_bundle(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "resolve", lambda self: self)
+    exe = "/Users/sunzh/Desktop/K8sLogGetter.app/Contents/MacOS/K8sLogGetter"
+    monkeypatch.setattr(sys, "executable", exe)
+    assert software_dir() == Path("/Users/sunzh/Desktop")
+
+
+def test_software_dir_frozen_macos_onefile(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "resolve", lambda self: self)
+    exe = "/Users/sunzh/Desktop/k8sgetter"
+    monkeypatch.setattr(sys, "executable", exe)
+    assert software_dir() == Path("/Users/sunzh/Desktop")

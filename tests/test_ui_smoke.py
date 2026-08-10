@@ -81,6 +81,21 @@ def test_log_panel_no_wrap_and_scroll(app, monkeypatch, tmp_path):
         page.deleteLater()
 
 
+def test_collect_page_aggregate_checkbox_default_checked(app, monkeypatch, tmp_path):
+    """②页汇总开关默认勾选，取消勾选后持久化到 config.json。"""
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
+    from src.ui.collect_page import CollectPage
+    page = CollectPage(lambda: [])
+    try:
+        assert page.aggregate_cb.isChecked() is True
+        page.aggregate_cb.setChecked(False)
+        from src.config import load_config
+        assert load_config()["aggregate_after_collect"] is False
+    finally:
+        page.deleteLater()
+
+
 def test_log_panel_uses_fixed_pitch_font(app, monkeypatch, tmp_path):
     """④页运维输出等宽字体：kubectl/df 对齐输出列对齐可读。"""
     monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")

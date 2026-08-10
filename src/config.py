@@ -2,12 +2,30 @@
 import base64
 import json
 import os
+import sys
 from pathlib import Path
 
 from .models import HostConfig
 
 APP_DIR = Path.home() / ".k8s_log_getter"
 CONFIG_PATH = APP_DIR / "config.json"
+
+
+def software_dir() -> Path:
+    """定位「软件所在目录」，跨平台、兼容源码运行与 PyInstaller 冻结。
+
+    汇总目录（logs_collected/）建在这里，即用户直觉里的"软件相同目录"。
+    - 源码运行：项目根目录。
+    - 冻结运行：可执行文件所在目录；macOS .app 回溯到 .app 外层，
+      避免把汇总目录写进 .app 包内部（exe 位于 X.app/Contents/MacOS/）。
+    - 显式不用 Path.cwd()：Finder/Explorer 双击启动的应用 cwd 常为 / 或系统目录。
+    """
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable).resolve()
+        if sys.platform == "darwin" and exe.parent.name == "MacOS":
+            return exe.parents[3]  # X.app/Contents/MacOS/.. → .app 外层目录
+        return exe.parent           # Windows .exe / macOS 独立可执行所在目录
+    return Path(__file__).resolve().parents[1]  # src/config.py → 项目根
 
 
 def encode_password(password: str) -> str:
@@ -21,7 +39,7 @@ def decode_password(encoded: str) -> str:
 
 
 def default_config() -> dict:
-    return {"hosts": [], "output_dir": ""}
+    return {"hosts": [], "output_dir": "", "aggregate_after_collect": True}
 
 
 def load_config() -> dict:

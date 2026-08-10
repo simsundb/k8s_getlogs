@@ -1,6 +1,7 @@
-"""并发采集器：任务队列 + 线程池 + 输出布局 + manifest + zip。"""
+"""并发采集器：任务队列 + 线程池 + 输出布局 + manifest + zip + 汇总。"""
 import json
 import logging
+import shutil
 import tarfile
 import zipfile
 from collections.abc import Callable
@@ -73,6 +74,49 @@ def zip_output(
             if path.is_file():
                 zf.write(path, path.relative_to(output_base))
     return target
+
+
+def aggregate_logs(source_dir: Path, dest_dir: Path) -> dict:
+    """把 source_dir 下所有 *.log 汇聚复制到 dest_dir（打平成一层）。
+
+    目标名 = <父目录名>_<原文件名>（父目录即 Pod 名），重名自动加 _1/_2 后缀，
+    与 collect_hycommon_logs.ps1 的「父目录_文件名」策略一致。只收 .log 文件，
+    与原采集语义（*.log 通配）对齐。用 copy2 保留时间戳且跨盘安全。
+    返回 {"files": n, "bytes": n, "errors": n, "dest_dir": Path}；
+    单文件失败不中断整体。
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stats = {"files": 0, "bytes": 0, "errors": 0, "dest_dir": dest_dir}
+    log_lines = [f"汇总时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                 f"源目录: {source_dir}",
+                 "----------------------------------------"]
+    for src in sorted(source_dir.rglob("*.log")):
+        if not src.is_file():
+            continue
+        new_name = f"{src.parent.name}_{src.name}"   # 父目录名=Pod名
+        final = dest_dir / new_name
+        counter = 1
+        while final.exists():
+            final = dest_dir / f"{src.parent.name}_{src.stem}_{counter}{src.suffix}"
+            counter += 1
+        try:
+            shutil.copy2(src, final)
+            stats["files"] += 1
+            stats["bytes"] += src.stat().st_size
+            log_lines.append(f"OK   : {src} -> {final.name}")
+        except OSError as e:
+            log.warning("汇总复制失败 %s -> %s: %s", src, final, e)
+            stats["errors"] += 1
+            log_lines.append(f"FAIL : {src} -> {e}")
+    # 汇总清单：记录每个文件的来源，便于追溯（对齐 collect_hycommon_logs.ps1）
+    try:
+        log_lines.append("----------------------------------------")
+        log_lines.append(f"成功: {stats['files']} | 失败: {stats['errors']}")
+        (dest_dir / "_copy_log.txt").write_text(
+            "\n".join(log_lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return stats
 
 
 class Collector:
