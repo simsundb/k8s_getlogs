@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
 
 from ..k8s_client import get_pods_meta
 from ..models import PodMeta
+from .chart_dialog import ChartDialog
 from .host_ns_selector import HostNamespaceSelector
 from .icons import set_icon
 
@@ -277,8 +278,9 @@ class AnalyzePage(QWidget):
             return
         field = self.group_combo.currentText()
         counter = Counter(_field_value(pm, field) or "(空)" for pm in self.metas)
-        top = counter.most_common(8)
-        self.group_result.setText("  ".join(f"{k}: {n}" for k, n in top))
+        # 数据多时若把统计结果拼成文本塞进页面 QLabel 会把界面撑得很大，
+        # 改为弹出图表对话框展示，主界面保持紧凑
+        ChartDialog.show_stats(counter, field, self.metas, self)
 
     def _export_html(self):
         if self.table.rowCount() == 0:

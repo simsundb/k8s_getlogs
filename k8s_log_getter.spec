@@ -54,14 +54,17 @@ a = Analysis(
     noarchive=False,
 )
 
-# 本应用只用 QtCore/QtGui/QtWidgets。collect_all + PySide6 内置 hook 会把整个
-# Qt 都收进来（Qt6WebEngineCore.dll≈200M、webengine 资源≈100M、qml≈30M、
-# avcodec 多媒体≈20M 等），对 widgets 应用全用不到。在 Analysis 合并后的最终
-# 产物上按路径/文件名片段剔除；platforms/imageformats 等运行所需插件保留。
+# 本应用用 QtWidgets + QtCharts（分组统计的柱状/线图）。collect_all + PySide6
+# 内置 hook 会把整个 Qt 都收进来（Qt6WebEngineCore.dll≈200M、webengine 资源≈100M、
+# qml≈30M、avcodec 多媒体≈20M 等），对 widgets+charts 应用全用不到。在 Analysis
+# 合并后的最终产物上按路径/文件名片段剔除；platforms/imageformats 等运行所需
+# 插件保留。注意 QtCharts 里含 "charts" 字样，不能按通用词 "charts" 剔除，
+# 否则会误删图表库；只按具体用不到的模块名剔除。
 _DROP_FRAGMENTS = (
-    "webengine", "quick", "qml", "qt3d", "charts", "multimedia",
-    "datavisualization", "graphs", "location", "sensors", "positioning",
-    "serialport", "bluetooth", "websockets", "webchannel", "pdf",
+    "webengine", "webchannel", "quick", "quick3d", "quickcontrols2",
+    "quickwidgets", "qml", "qmltooling", "qt3d",
+    "multimedia", "datavisualization", "graphs", "location", "sensors",
+    "positioning", "serialport", "bluetooth", "websockets", "pdf",
     "designer", "metatypes", "avcodec", "avformat", "avutil",
     "swresample", "swscale", "qtopengl", "icudtl", "v8_context",
 )
