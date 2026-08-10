@@ -1,6 +1,10 @@
 import sys
 from pathlib import Path
 
+# 必须在任何第三方 import 之前引入崩溃兜底：打包版 console=False 时
+# 一旦崩溃 traceback 无任何可见输出，需写文件才能定位（见 crashguard）
+import src.crashguard  # noqa: F401
+
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
