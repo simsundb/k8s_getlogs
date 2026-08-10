@@ -27,6 +27,9 @@ class HostNamespaceSelector(QWidget):
         layout.addWidget(QLabel("SSH主机:"))
         self.host_combo = QComboBox()
         self.host_combo.setMinimumWidth(240)
+        # 主机/命名空间是连接后动态填充的，默认 AdjustToContentsOnFirstShow
+        # 首次显示后就不再重算宽度 → 长文本被截断；改 AdjustToContents 自适应内容
+        self.host_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         layout.addWidget(self.host_combo)
         self.connect_btn = QPushButton("连接")
         self.connect_btn.setProperty("primary", True)
@@ -37,6 +40,7 @@ class HostNamespaceSelector(QWidget):
         layout.addWidget(QLabel("命名空间:"))
         self.ns_combo = QComboBox()
         self.ns_combo.setMinimumWidth(260)
+        self.ns_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         layout.addWidget(self.ns_combo)
         self.refresh_btn = QPushButton("刷新")
         set_icon(self.refresh_btn, "refresh-cw")

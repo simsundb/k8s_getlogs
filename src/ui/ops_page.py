@@ -94,10 +94,16 @@ class OpsPage(QWidget):
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("类别:"))
         self.cat_combo = QComboBox()
+        # 默认选中「全部」时若没有最小宽度，AdjustToContents 会把盒子收缩到
+        # 单字那么窄（57px），看起来很小气；给一个合理下限保持正常宽度
+        self.cat_combo.setMinimumWidth(120)
+        self.cat_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         row1.addWidget(self.cat_combo)
         row1.addWidget(QLabel("运维项:"))
         self.cmd_combo = QComboBox()
         self.cmd_combo.setMinimumWidth(280)
+        # 运维项是动态加载的「[类别] 名称」，随内容自适应宽度，避免长项被截断
+        self.cmd_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         row1.addWidget(self.cmd_combo, 1)
         self.run_btn = QPushButton("执行")
         self.run_btn.setProperty("primary", True)

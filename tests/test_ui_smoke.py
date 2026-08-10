@@ -117,6 +117,8 @@ def test_icons_load_and_apply(app, monkeypatch, tmp_path):
         assert not qicon.isNull(), f"图标缺失: {name}/{color}.png"
     qss = combo_arrow_qss()
     assert "chevron-down" in qss and "url(" in qss   # 下拉箭头图标片段已生成
+    # 源图 40px，QSS 必须显式缩小（16px），否则箭头在下拉区里过大
+    assert "width: 16px" in qss and "height: 16px" in qss
     btn = QPushButton()
     try:
         set_icon(btn, "refresh-cw")

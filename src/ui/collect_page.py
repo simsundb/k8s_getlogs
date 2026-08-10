@@ -40,6 +40,9 @@ class CheckableCombo(QComboBox):
         self._model.itemChanged.connect(lambda _i: self.itemsToggled.emit())
         self.view().pressed.connect(self._on_pressed)
         self._keep_open = False
+        # 项是运行时动态加载的：用 AdjustToContents 让下拉宽度随选中文本自适应，
+        # 避免长部署名/长命名空间被截断（默认 AdjustToContentsOnFirstShow 只算首显）
+        self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
 
     def add_checkable_item(self, text, user_data=None):
         self.addItem(text)
@@ -170,6 +173,7 @@ class CollectPage(QWidget):
         mode_row.addWidget(QLabel("部署名(可多选):"))
         self.deploy_combo = CheckableCombo()             # 勾选部署名=选中其全部 Pod
         self.deploy_combo.setMinimumWidth(240)
+        self.deploy_combo.setMaximumWidth(420)
         self.deploy_combo.setToolTip("勾选部署名 = 选中该部署下全部 Pod；支持多选")
         mode_row.addWidget(self.deploy_combo)
         mode_row.addStretch(1)
@@ -191,6 +195,7 @@ class CollectPage(QWidget):
         self.cat_combo = QComboBox()
         self.cat_combo.addItems(list(PATTERN_MAP.keys()))
         self.cat_combo.setMinimumWidth(150)
+        self.cat_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         cat_row.addWidget(self.cat_combo)
         cat_row.addStretch(1)
         self.start_btn = QPushButton("开始采集")

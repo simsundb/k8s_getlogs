@@ -46,6 +46,15 @@ def test_ops_page_category_filter(app, monkeypatch, tmp_path):
         page.deleteLater()
 
 
+def test_ops_page_category_combo_has_min_width(app, monkeypatch, tmp_path):
+    """类别下拉默认选中「全部」时不得收缩成窄条（AdjustToContents 会缩到 sizeHint）。"""
+    page = _build_page(monkeypatch, tmp_path)
+    try:
+        assert page.cat_combo.minimumWidth() >= 120
+    finally:
+        page.deleteLater()
+
+
 def test_ops_page_desc_shows_resolved_namespace(app, monkeypatch, tmp_path):
     page = _build_page(monkeypatch, tmp_path)
     try:

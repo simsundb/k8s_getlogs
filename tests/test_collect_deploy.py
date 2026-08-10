@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox
 
 from src.models import DEFAULT_LOG_DIR, PodMeta
 from src.ui.style import SELECT_BG
@@ -130,6 +130,10 @@ def test_deploy_combo_min_width(app, monkeypatch, tmp_path):
     page = _build_page(app, monkeypatch, tmp_path, [])
     try:
         assert page.deploy_combo.minimumWidth() >= 240
+        assert page.deploy_combo.maximumWidth() == 420   # 防被超长项撑破布局
+        # 动态填充的下拉应随内容自适应，而不是只在首次显示时定宽
+        assert (page.deploy_combo.sizeAdjustPolicy()
+                == QComboBox.SizeAdjustPolicy.AdjustToContents)
     finally:
         page.deleteLater()
 

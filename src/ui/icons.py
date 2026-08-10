@@ -31,9 +31,12 @@ def combo_arrow_qss() -> str:
     """QComboBox 下拉箭头样式片段：运行时拼绝对路径，源码/冻结包都有效。
 
     图标缺失时返回空串（QSS 兜底为无箭头，界面不报错）。
+    源图是 40px，若不设宽高会按原尺寸渲染在下拉区里显得过大；
+    这里显式缩放到 16px 小箭头。
     """
     path = _icons_dir() / "accent" / "chevron-down.png"
     if not path.exists():
         return ""
-    return f"QComboBox::down-arrow {{ image: url({path}); }}"
+    return (f"QComboBox::down-arrow {{ image: url({path}); "
+            f"width: 16px; height: 16px; }}")
 
