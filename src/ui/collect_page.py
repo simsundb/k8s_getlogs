@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import (QBrush, QColor, QDesktopServices, QStandardItem,
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import (QBrush, QColor, QStandardItem,
                            QStandardItemModel)
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -449,8 +449,6 @@ class CollectPage(QWidget):
         elif worker is not None and worker.aggregate_error:
             self.log_panel.append_log(
                 f"[错误] 汇总失败：{worker.aggregate_error}（已跳过）")
-        open_path = worker.aggregate["dest_dir"] if (worker and worker.aggregate) else self.out_dir
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(open_path)))
         self._worker = None
 
     def _cancel(self):
