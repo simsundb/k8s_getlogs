@@ -61,12 +61,14 @@ a = Analysis(
 # 插件保留。注意 QtCharts 里含 "charts" 字样，不能按通用词 "charts" 剔除，
 # 否则会误删图表库；只按具体用不到的模块名剔除。
 _DROP_FRAGMENTS = (
+    # 注意：不能加 "qtopengl"——QtCharts 依赖 QtOpenGL 和 QtOpenGLWidgets
+    #（后者小写为 qtopenglwidgets 也含该片段），误删会让打包版启动即闪退
     "webengine", "webchannel", "quick", "quick3d", "quickcontrols2",
     "quickwidgets", "qml", "qmltooling", "qt3d",
     "multimedia", "datavisualization", "graphs", "location", "sensors",
     "positioning", "serialport", "bluetooth", "websockets", "pdf",
     "designer", "metatypes", "avcodec", "avformat", "avutil",
-    "swresample", "swscale", "qtopengl", "icudtl", "v8_context",
+    "swresample", "swscale", "icudtl", "v8_context",
 )
 
 
