@@ -31,7 +31,9 @@ echo ""
 echo "==> 完成"
 if [ -d "dist/K8sLogGetter.app" ]; then
     echo "macOS 产物: dist/K8sLogGetter.app"
-    echo "分发前建议: xattr -cr dist/K8sLogGetter.app   (去除隔离标记, 对方双击即可打开)"
+    # 去除隔离标记, 对方双击即可打开（本机开发的 Mac 不会加标记，但从
+    # 网上下载/拷贝过的文件可能有，统一清一次无害）
+    xattr -cr "dist/K8sLogGetter.app"
     # 可选: 生成 dmg 安装镜像
     if command -v hdiutil >/dev/null 2>&1; then
         echo ""
