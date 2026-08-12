@@ -16,9 +16,13 @@ cd "$(dirname "$0")"
 
 echo "==> 安装构建依赖"
 PYTHON="python3"
-if [ -x "venv/bin/python" ]; then
+# 优先项目虚拟环境（.venv），兼容旧命名的 venv，最后回退系统 python3
+if [ -x ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+elif [ -x "venv/bin/python" ]; then
     PYTHON="venv/bin/python"
 fi
+echo "使用解释器: $PYTHON"
 "$PYTHON" -m pip install -q pyinstaller
 
 echo "==> 清理旧产物"
