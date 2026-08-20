@@ -115,6 +115,8 @@ class CollectPage(QWidget):
         self._worker = None
         self.metas = []
         cfg = load_config()
+        # 默认存储目录 = 软件所在目录；用户指定 output_dir 时跟随指定目录
+        self.out_dir = Path(cfg.get("output_dir") or str(software_dir()))
 
         root = QVBoxLayout(self)
         self.selector = HostNamespaceSelector(hosts_provider, self)
@@ -149,11 +151,11 @@ class CollectPage(QWidget):
         root.addLayout(src_row)
 
         agg_row = QHBoxLayout()
-        self.aggregate_cb = QCheckBox("采集后汇总日志到软件目录")
+        self.aggregate_cb = QCheckBox("采集后汇总日志到存储目录")
         self.aggregate_cb.setChecked(cfg.get("aggregate_after_collect", True))
         self.aggregate_cb.setToolTip(
-            "采集完成后把所有 .log 复制到软件目录 logs_collected/<日期>/\n"
-            f"当前软件目录: {software_dir()}")
+            "采集完成后把所有 .log 复制到存储目录下 logs_collected/<日期>/\n"
+            f"当前存储目录: {self.out_dir}")
         agg_row.addWidget(self.aggregate_cb)
         agg_row.addStretch(1)
         root.addLayout(agg_row)
@@ -231,7 +233,6 @@ class CollectPage(QWidget):
         self.deselect_all_btn.clicked.connect(self._on_deselect_all)
         self.pod_list.itemChanged.connect(self._on_pod_item_changed)
 
-        self.out_dir = Path(cfg.get("output_dir") or str(Path.cwd() / "output"))
         self._update_out_label()
 
     def _update_out_label(self):
@@ -400,10 +401,10 @@ class CollectPage(QWidget):
         self._ns = ns
         self._category = category
 
-        # 采集完成后的汇总目标目录（软件目录/logs_collected/<日期>），仅勾选时启用
+        # 采集完成后的汇总目标目录（存储目录/logs_collected/<日期>），仅勾选时启用
         self._aggregate_dir = None
         if self.aggregate_cb.isChecked():
-            self._aggregate_dir = software_dir() / "logs_collected" / self._date
+            self._aggregate_dir = self.out_dir / "logs_collected" / self._date
 
         def _factory():
             return SSHClient(host.ip, host.port, host.username, host.password).connect()

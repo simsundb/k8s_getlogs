@@ -14,7 +14,8 @@ CONFIG_PATH = APP_DIR / "config.json"
 def software_dir() -> Path:
     """定位「软件所在目录」，跨平台、兼容源码运行与 PyInstaller 冻结。
 
-    汇总目录（logs_collected/）建在这里，即用户直觉里的"软件相同目录"。
+    默认存储目录（采集输出）建在这里，汇总子目录 logs_collected/ 默认也在这里；
+    UI 里用户可另行指定存储目录，此时汇总跟随存储目录。
     - 源码运行：项目根目录。
     - 冻结运行：可执行文件所在目录；macOS .app 回溯到 .app 外层，
       避免把汇总目录写进 .app 包内部（exe 位于 X.app/Contents/MacOS/）。

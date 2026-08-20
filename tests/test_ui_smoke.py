@@ -81,6 +81,19 @@ def test_log_panel_no_wrap_and_scroll(app, monkeypatch, tmp_path):
         page.deleteLater()
 
 
+def test_collect_page_default_storage_dir_is_software_dir(app, monkeypatch, tmp_path):
+    """②页默认存储目录 = 软件所在目录；config 指定 output_dir 时跟随。"""
+    monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr("src.config.APP_DIR", tmp_path)
+    from src.config import software_dir
+    from src.ui.collect_page import CollectPage
+    page = CollectPage(lambda: [])
+    try:
+        assert page.out_dir == software_dir()
+    finally:
+        page.deleteLater()
+
+
 def test_collect_page_aggregate_checkbox_default_checked(app, monkeypatch, tmp_path):
     """②页汇总开关默认勾选，取消勾选后持久化到 config.json。"""
     monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
