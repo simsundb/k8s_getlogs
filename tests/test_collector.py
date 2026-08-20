@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Event
 
 from src.collector import (Collector, aggregate_logs, extract_tar,
-                           write_manifest, zip_output)
+                           prefix_pod_logs, write_manifest, zip_output)
 from src.config import software_dir
 from src.models import DEFAULT_LOG_DIR, CollectResult, CollectTask, PodMeta
 
@@ -113,8 +113,9 @@ def test_collector_runs_tasks_and_writes_layout(tmp_path):
     results = collector.run(tasks, cancel=Event())
     assert {r.pod_name for r in results} == {"pod1", "pod2"}
     assert all(r.ok for r in results)
-    assert (out_base / ns / "app" / "pod1" / "hycommon.log").exists()
-    assert (out_base / ns / "app" / "pod2" / "hycommon.log").exists()
+    # 分散副本：Pod 目录里的日志文件本身也带部署名前缀
+    assert (out_base / ns / "app" / "pod1" / "app_hycommon.log").exists()
+    assert (out_base / ns / "app" / "pod2" / "app_hycommon.log").exists()
 
 
 def test_collector_no_matching_logs_marked_skipped(tmp_path):
@@ -229,6 +230,19 @@ def _make_pod_tree(root: Path, pods: dict) -> Path:
         for name, content in files.items():
             (d / name).write_text(content, encoding="utf-8")
     return root
+
+
+def test_prefix_pod_logs_renames_with_deploy(tmp_path):
+    pod = tmp_path / "out" / "ns" / "app" / "podA"
+    pod.mkdir(parents=True)
+    (pod / "hycommon.log").write_text("x")
+    (pod / "hyframework.log").write_text("y")
+    (pod / "readme.txt").write_text("keep")   # 非 .log 不重命名
+    prefix_pod_logs(pod, "app")
+    assert (pod / "app_hycommon.log").read_text() == "x"
+    assert (pod / "app_hyframework.log").read_text() == "y"
+    assert (pod / "readme.txt").read_text() == "keep"
+    assert not (pod / "hycommon.log").exists()
 
 
 def test_aggregate_logs_flattens_and_renames(tmp_path):

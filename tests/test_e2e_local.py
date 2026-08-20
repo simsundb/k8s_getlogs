@@ -61,15 +61,15 @@ def test_end_to_end(tmp_path):
     manifest = json.loads((collect_base / "pods_manifest.json").read_text(encoding="utf-8"))
     assert len(manifest["pods"]) == 2
 
-    # 最终压缩包（含 manifest）应同时包含采集到的日志与 manifest
+    # 最终压缩包（含 manifest）应同时包含采集到的日志（带部署名前缀）与 manifest
     z = zip_output(out_base, date_name, ns, "ALL")
     with zipfile.ZipFile(z) as zf:
         names = zf.namelist()
-        assert any("ppl2-a/hycommon.log" in n for n in names)
+        assert any("ppl2-a/ppl2_hycommon.log" in n for n in names)
         assert any("pods_manifest.json" in n for n in names)
 
-    # 按设计布局，日志在 <存储目录>/<日期>/<命名空间>/<部署名>/<Pod>/
-    assert (collect_base / ns / "ppl2" / "ppl2-a" / "hycommon.log").exists()
+    # 按设计布局，日志在 <存储目录>/<日期>/<命名空间>/<部署名>/<Pod>/，且本身带部署名前缀
+    assert (collect_base / ns / "ppl2" / "ppl2-a" / "ppl2_hycommon.log").exists()
 
     # 采集后汇总到软件目录：所有 .log 打平成 <部署名>_<文件名> 平铺副本
     agg_dir = tmp_path / "logs_collected" / date_name
