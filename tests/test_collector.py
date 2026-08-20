@@ -240,9 +240,9 @@ def test_aggregate_logs_flattens_and_renames(tmp_path):
     stats = aggregate_logs(source, dest)
     assert stats["files"] == 3
     assert stats["errors"] == 0
-    assert (dest / "podA_hycommon.log").read_text() == "one"
-    assert (dest / "podA_err.log").read_text() == "two"
-    assert (dest / "podB_hycommon.log").read_text() == "three"
+    assert (dest / "app_hycommon.log").read_text() == "one"
+    assert (dest / "app_err.log").read_text() == "two"
+    assert (dest / "app_hycommon_1.log").read_text() == "three"   # 同部署重名加后缀
     assert (source / "ns" / "app" / "podA" / "hycommon.log").exists()  # 源文件保留
 
 
@@ -251,8 +251,8 @@ def test_aggregate_logs_only_log_files(tmp_path):
     (tmp_path / "ns" / "app" / "podA" / "a.tar.gz").write_bytes(b"z")
     stats = aggregate_logs(source, tmp_path / "agg")
     assert stats["files"] == 1
-    assert (tmp_path / "agg" / "podA_a.log").exists()
-    assert not (tmp_path / "agg" / "podA_a.txt").exists()
+    assert (tmp_path / "agg" / "app_a.log").exists()
+    assert not (tmp_path / "agg" / "app_a.txt").exists()
 
 
 def test_aggregate_logs_collision_suffix(tmp_path):
@@ -260,18 +260,18 @@ def test_aggregate_logs_collision_suffix(tmp_path):
     dest = tmp_path / "agg"
     # 目标目录里预先放一个同名文件，触发 _1 后缀（dest 须在 source 树之外）
     dest.mkdir()
-    (dest / "podA_hycommon.log").write_text("old")
+    (dest / "app_hycommon.log").write_text("old")
     stats = aggregate_logs(source, dest)
     assert stats["files"] == 1
-    assert (dest / "podA_hycommon.log").read_text() == "old"      # 原有文件不动
-    assert (dest / "podA_hycommon_1.log").read_text() == "a1"     # 新文件加后缀
+    assert (dest / "app_hycommon.log").read_text() == "old"      # 原有文件不动
+    assert (dest / "app_hycommon_1.log").read_text() == "a1"     # 新文件加后缀
 
 
 def test_aggregate_logs_creates_nested_dest(tmp_path):
     source = _make_pod_tree(tmp_path, {"podA": {"hycommon.log": "x"}})
     dest = tmp_path / "logs_collected" / "2026-08-10"
     stats = aggregate_logs(source, dest)
-    assert (dest / "podA_hycommon.log").exists()
+    assert (dest / "app_hycommon.log").exists()
     assert stats["bytes"] > 0
 
 

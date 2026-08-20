@@ -71,17 +71,17 @@ def test_end_to_end(tmp_path):
     # 按设计布局，日志在 <存储目录>/<日期>/<命名空间>/<部署名>/<Pod>/
     assert (collect_base / ns / "ppl2" / "ppl2-a" / "hycommon.log").exists()
 
-    # 采集后汇总到软件目录：所有 .log 打平成 <Pod>_<文件名> 平铺副本
+    # 采集后汇总到软件目录：所有 .log 打平成 <部署名>_<文件名> 平铺副本
     agg_dir = tmp_path / "logs_collected" / date_name
     agg = aggregate_logs(collect_base, agg_dir)
     assert agg["files"] == 3
     assert agg["errors"] == 0
-    assert (agg_dir / "ppl2-a_hycommon.log").exists()
-    assert (agg_dir / "ppl2-a_hyframework.log").exists()
-    assert (agg_dir / "ppl2-b_hycommon.log").exists()
-    assert (agg_dir / "ppl2-a_hycommon.log").read_text(encoding="utf-8") == "one"
-    assert (agg_dir / "ppl2-b_hycommon.log").read_text(encoding="utf-8") == "three"
+    assert (agg_dir / "ppl2_hycommon.log").exists()
+    assert (agg_dir / "ppl2_hyframework.log").exists()
+    assert (agg_dir / "ppl2_hycommon_1.log").exists()
+    assert (agg_dir / "ppl2_hycommon.log").read_text(encoding="utf-8") == "one"
+    assert (agg_dir / "ppl2_hycommon_1.log").read_text(encoding="utf-8") == "three"
     # 汇总清单：记录每个文件的来源
     copy_log = (agg_dir / "_copy_log.txt").read_text(encoding="utf-8")
-    assert "ppl2-a_hycommon.log" in copy_log
+    assert "ppl2_hycommon.log" in copy_log
     assert "成功: 3 | 失败: 0" in copy_log

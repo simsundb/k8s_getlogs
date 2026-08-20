@@ -79,9 +79,8 @@ def zip_output(
 def aggregate_logs(source_dir: Path, dest_dir: Path) -> dict:
     """把 source_dir 下所有 *.log 汇聚复制到 dest_dir（打平成一层）。
 
-    目标名 = <父目录名>_<原文件名>（父目录即 Pod 名），重名自动加 _1/_2 后缀，
-    与 collect_hycommon_logs.ps1 的「父目录_文件名」策略一致。只收 .log 文件，
-    与原采集语义（*.log 通配）对齐。用 copy2 保留时间戳且跨盘安全。
+    目标名 = <部署名>_<原文件名>（部署名为目录布局第 2 级），重名自动加 _1/_2 后缀。
+    只收 .log 文件，与原采集语义（*.log 通配）对齐。用 copy2 保留时间戳且跨盘安全。
     返回 {"files": n, "bytes": n, "errors": n, "dest_dir": Path}；
     单文件失败不中断整体。
     """
@@ -93,11 +92,14 @@ def aggregate_logs(source_dir: Path, dest_dir: Path) -> dict:
     for src in sorted(source_dir.rglob("*.log")):
         if not src.is_file():
             continue
-        new_name = f"{src.parent.name}_{src.name}"   # 父目录名=Pod名
+        # 目录布局固定为 <输出根>/<命名空间>/<部署名>/<Pod>/…，第 2 级即部署名
+        rel = src.relative_to(source_dir).parts
+        deploy_name = rel[1] if len(rel) >= 3 else src.parent.name
+        new_name = f"{deploy_name}_{src.name}"   # 部署名_原始文件名
         final = dest_dir / new_name
         counter = 1
         while final.exists():
-            final = dest_dir / f"{src.parent.name}_{src.stem}_{counter}{src.suffix}"
+            final = dest_dir / f"{deploy_name}_{src.stem}_{counter}{src.suffix}"
             counter += 1
         try:
             shutil.copy2(src, final)
