@@ -267,6 +267,16 @@ def test_pack_stream_to_tar_roundtrip(tmp_path):
         assert tf.extractfile("b.log").read() == b"hello"
 
 
+def test_pack_stream_to_tar_sets_sane_mtime(tmp_path):
+    """TarInfo 默认 mtime=0 → 解压出的文件是 1970，ZIP 不支持 <1980 会直接崩。"""
+    raw_path = tmp_path / "s.raw"
+    raw_path.write_bytes(b"L:a.log\n3\nabc")
+    tar_path = tmp_path / "out.tar.gz"
+    pack_stream_to_tar(raw_path, tar_path)
+    with tarfile.open(tar_path, "r:gz") as tf:
+        assert tf.getmember("a.log").mtime >= 315532800  # 1980-01-01 UTC
+
+
 def test_pack_stream_to_tar_empty_stream_is_zero(tmp_path):
     """容器里没有匹配文件时降级流为空，产出空包、文件数 0（下游记为「无匹配日志」）。"""
     raw_path = tmp_path / "s.raw"

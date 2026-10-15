@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tarfile
 import zipfile
@@ -143,6 +144,37 @@ def test_collector_without_tar_no_matching_logs_skipped(tmp_path):
     results = collector.run([task], cancel=Event())
     assert results[0].ok is False
     assert results[0].error == "无匹配日志"
+
+
+def test_no_tar_collect_then_zip_succeeds(tmp_path):
+    """回归：无 tar 采集出的日志时间戳若早于 1980，zip 会 ValueError 崩掉整个程序。"""
+    src = _make_source(tmp_path, {"hycommon.log": "one"})
+    out_base = tmp_path / "output"
+    collector = Collector(lambda: _NoTarSSH(src), out_base, max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+    results = collector.run([task], cancel=Event())
+    assert results[0].ok is True
+
+    pod_log = out_base / "ns" / "app" / "podX" / "app_hycommon.log"
+    assert pod_log.stat().st_mtime >= 315532800      # 1980-01-01 UTC
+
+    z = zip_output(out_base, "ns", "ns", "ALL")
+    with zipfile.ZipFile(z) as zf:
+        assert zf.getinfo("ns/app/podX/app_hycommon.log").date_time[0] >= 1980
+
+
+def test_zip_output_clamps_pre_1980_timestamps(tmp_path):
+    """源文件时间戳异常（早于 1980）时钳到 1980 出包，而不是抛异常中断采集。"""
+    base = tmp_path / "output"
+    pod_dir = base / "2026-08-08" / "ns1"
+    pod_dir.mkdir(parents=True)
+    old = pod_dir / "old.log"
+    old.write_text("x", encoding="utf-8")
+    os.utime(old, (0, 0))
+
+    z = zip_output(base, "2026-08-08", "ns1", "ALL")
+    with zipfile.ZipFile(z) as zf:
+        assert zf.getinfo("2026-08-08/ns1/old.log").date_time[0] == 1980
 
 
 def test_extract_tar(tmp_path):

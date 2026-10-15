@@ -66,10 +66,16 @@ def zip_output(
     namespace: str,
     category: str,
 ) -> Path:
-    """把 <output_base>/<date_dir_name> 打成 <output_base>/<date>-<ns>-<category>.zip。"""
+    """把 <output_base>/<date_dir_name> 打成 <output_base>/<date>-<ns>-<category>.zip。
+
+    strict_timestamps=False：源文件时间戳早于 1980（ZIP 不支持的区间）时钳到 1980
+    而不是抛 ValueError。容器时钟不准、日志来自异常时间戳时，采集结果不该因为
+    打包这一步整个崩掉。
+    """
     source = output_base / date_dir_name
     target = output_base / f"{date_dir_name}-{namespace}-{category}.zip"
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED,
+                         strict_timestamps=False) as zf:
         for path in sorted(source.rglob("*")):
             if path.is_file():
                 zf.write(path, path.relative_to(output_base))

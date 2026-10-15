@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import tarfile
+import time
 from pathlib import Path
 
 from .models import DEFAULT_LOG_DIR, PodMeta
@@ -158,6 +159,10 @@ def pack_stream_to_tar(raw_path: Path, tar_path: Path) -> int:
                         f"降级流被截断: {name} 声明 {size} 字节，实际只剩 {left} 字节")
                 info = tarfile.TarInfo(name)
                 info.size = size
+                # 必须给一个像样的 mtime：TarInfo 默认 0（1970），解压后文件时间戳
+                # 早于 1980，zip 打包时会直接 ValueError 崩掉（ZIP 不支持 <1980）。
+                # 用本地采集时刻，与 manifest 的 collectedAt 语义一致。
+                info.mtime = int(time.time())
                 tf.addfile(info, fh)
                 count += 1
     except BaseException:
