@@ -17,6 +17,10 @@ class _FakeSSH:
     def __init__(self, source_dir: Path):
         self.source_dir = source_dir
 
+    def exec_stdout(self, command, timeout=60):
+        """tar 探测统一回「有 tar」，走原有 tar 路径。"""
+        return 0, "__TAR_OK__\n", ""
+
     def stream_to_file(self, command, filepath, timeout=600):
         with tarfile.open(filepath, "w:gz") as tf:
             for p in sorted(self.source_dir.rglob("*")):
@@ -34,6 +38,9 @@ class _RecordingSSH:
     def __init__(self, source_dir: Path):
         self.source_dir = source_dir
         self.last_cmd = ""
+
+    def exec_stdout(self, command, timeout=60):
+        return 0, "__TAR_OK__\n", ""
 
     def stream_to_file(self, command, filepath, timeout=600):
         self.last_cmd = command
@@ -54,12 +61,38 @@ class _CorruptStreamClient:
         self.payload = payload
         self.closed = False
 
+    def exec_stdout(self, command, timeout=60):
+        return 0, "__TAR_OK__\n", ""
+
     def stream_to_file(self, command, filepath, timeout=600):
         Path(filepath).write_bytes(self.payload)
         return 0
 
     def close(self):
         self.closed = True
+
+
+class _NoTarSSH:
+    """模拟容器内没有 tar：探测未命中，stream_to_file 输出「L:<名>\\n<长度>\\n<正文>」降级流。"""
+
+    def __init__(self, source_dir: Path):
+        self.source_dir = source_dir
+
+    def exec_stdout(self, command, timeout=60):
+        return 1, "", "sh: tar: not found"
+
+    def stream_to_file(self, command, filepath, timeout=600):
+        with open(filepath, "wb") as fh:
+            for p in sorted(self.source_dir.rglob("*")):
+                if p.is_file():
+                    data = p.read_bytes()
+                    rel = p.relative_to(self.source_dir).as_posix()
+                    fh.write(f"L:{rel}\n{len(data)}\n".encode("utf-8"))
+                    fh.write(data)
+        return 0
+
+    def close(self):
+        pass
 
 
 def _make_source(root: Path, files: dict) -> Path:
@@ -84,6 +117,32 @@ def test_collector_uses_task_log_dir(tmp_path):
     results = collector.run([task], cancel=Event())
     assert results[0].ok is True
     assert "cd /data/logs" in fake.last_cmd
+
+
+def test_collector_without_tar_still_collects(tmp_path):
+    """容器里没有 tar：降级逐文件读取，目录布局/命名与 tar 路径完全一致。"""
+    src = _make_source(tmp_path, {"hycommon.log": "one", "other.log": "two"})
+    collector = Collector(lambda: _NoTarSSH(src), tmp_path / "output", max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+    results = collector.run([task], cancel=Event())
+    assert results[0].ok is True
+    assert results[0].file_count == 2
+    assert results[0].total_bytes == 6
+    pod_dir = tmp_path / "output" / "ns" / "app" / "podX"
+    assert (pod_dir / "app_hycommon.log").read_text(encoding="utf-8") == "one"
+    assert (pod_dir / "app_other.log").read_text(encoding="utf-8") == "two"
+    # 降级用的中间流文件不能残留在 Pod 目录里（否则会被打进 zip）
+    assert not (pod_dir / "_tmp.tar.gz.raw").exists()
+
+
+def test_collector_without_tar_no_matching_logs_skipped(tmp_path):
+    """无 tar 且容器里没有匹配日志时，等同「无匹配日志」，不算失败。"""
+    src = _make_source(tmp_path, {})
+    collector = Collector(lambda: _NoTarSSH(src), tmp_path / "output", max_workers=1)
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
+    results = collector.run([task], cancel=Event())
+    assert results[0].ok is False
+    assert results[0].error == "无匹配日志"
 
 
 def test_extract_tar(tmp_path):

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 
-from .k8s_client import collect_pod_tar
+from .k8s_client import collect_pod_logs
 from .models import NO_MATCH_ERROR, CollectResult, CollectTask, PodMeta
 
 log = logging.getLogger("collector")
@@ -175,7 +175,7 @@ class Collector:
                     )
                     target_dir.mkdir(parents=True, exist_ok=True)
                     tar_path = target_dir / "_tmp.tar.gz"
-                    count = collect_pod_tar(
+                    count = collect_pod_logs(
                         client, task.namespace, task.pod_name, task.pattern,
                         tar_path, log_dir=task.log_dir,
                     )

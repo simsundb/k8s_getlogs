@@ -33,7 +33,7 @@ python -m pytest -v
 ## 说明
 
 - 日志默认存 `./output/<日期>/<命名空间>/<部署名>/<Pod>/`，可在页面②选择存储目录
-- 采集用 `tar czf -` 流式下载 + 4 线程并发，输出含 `pods_manifest.json`（完整 Pod JSON + 摘要）
+- 采集优先用 `tar czf -` 流式下载 + 4 线程并发（先探测容器内有无 `tar`）；容器里没有 `tar`（精简镜像/busybox）时自动降级为逐文件读取、本地重新打包，采集结果与目录布局完全一致，输出含 `pods_manifest.json`（完整 Pod JSON + 摘要）
 - 配置存 `~/.k8s_log_getter/config.json`，软件自身日志存 `~/.k8s_log_getter/logs/app.log`
 
 ## 打包

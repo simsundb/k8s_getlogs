@@ -15,6 +15,10 @@ class _FakeSSH:
     def __init__(self, source_dir):
         self.source_dir = source_dir
 
+    def exec_stdout(self, command, timeout=60):
+        """tar 探测统一回「有 tar」。"""
+        return 0, "__TAR_OK__\n", ""
+
     def stream_to_file(self, command, filepath, timeout=600):
         with tarfile.open(filepath, "w:gz") as tf:
             for p in sorted(self.source_dir.rglob("*")):
