@@ -40,7 +40,7 @@ def decode_password(encoded: str) -> str:
 
 
 def default_config() -> dict:
-    return {"hosts": [], "output_dir": "", "aggregate_after_collect": True}
+    return {"hosts": [], "output_dir": ""}
 
 
 def load_config() -> dict:

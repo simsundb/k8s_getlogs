@@ -1,12 +1,11 @@
 # tests/test_e2e_local.py
-"""本地端到端：模拟 2 个 Pod 的远端日志目录 → 采集 → manifest → zip。"""
+"""本地端到端：模拟 2 个 Pod 的远端日志目录 → 采集 → 收尾汇总 → 只剩 logs_collected/。"""
 import json
 import tarfile
-import zipfile
 from pathlib import Path
 from threading import Event
 
-from src.collector import Collector, aggregate_logs, write_manifest, zip_output
+from src.collector import Collector, finish_collection
 from src.k8s_client import PATTERN_MAP
 from src.models import CollectSummary, CollectTask, PodMeta
 
@@ -53,39 +52,29 @@ def test_end_to_end(tmp_path):
                      labels={"project": "k251182"}) for p in ("ppl2-a", "ppl2-b")]
 
     # 与真实 UI（collect_page.py）一致：采集器 output_base = <存储目录>/<日期>，
-    # 日志落在 <日期>/<命名空间>/<部署名>/<Pod>/，随后整日期目录被打进 zip。
+    # 日志先落在 <日期>/<命名空间>/<部署名>/<Pod>/，收尾时汇总并清掉这层中间目录。
     collect_base = out_base / date_name
     results = Collector(factory, collect_base, max_workers=2).run(tasks, cancel=Event())
     summary = CollectSummary.build(results)
     assert summary.ok == 2
 
-    # write_manifest 不自动建父目录；正常采集已创建日期目录，这里保持防御性 mkdir
-    collect_base.mkdir(parents=True, exist_ok=True)
-    write_manifest(collect_base / "pods_manifest.json", ns, metas, results)
-    manifest = json.loads((collect_base / "pods_manifest.json").read_text(encoding="utf-8"))
-    assert len(manifest["pods"]) == 2
-
-    # 最终压缩包（含 manifest）应同时包含采集到的日志（带部署名前缀）与 manifest
-    z = zip_output(out_base, date_name, ns, "ALL")
-    with zipfile.ZipFile(z) as zf:
-        names = zf.namelist()
-        assert any("ppl2-a/ppl2_hycommon.log" in n for n in names)
-        assert any("pods_manifest.json" in n for n in names)
-
-    # 按设计布局，日志在 <存储目录>/<日期>/<命名空间>/<部署名>/<Pod>/，且本身带部署名前缀
-    assert (collect_base / ns / "ppl2" / "ppl2-a" / "ppl2_hycommon.log").exists()
-
-    # 采集后汇总到软件目录：所有 .log 打平成 <部署名>_<文件名> 平铺副本
-    agg_dir = tmp_path / "logs_collected" / date_name
-    agg = aggregate_logs(collect_base, agg_dir)
+    # 收尾：汇总 + 写 manifest + 删中间目录树（不再打 zip）
+    agg_dir = out_base / "logs_collected" / date_name
+    agg = finish_collection(collect_base, agg_dir, ns, metas, results)
     assert agg["files"] == 3
     assert agg["errors"] == 0
-    assert (agg_dir / "ppl2_hycommon.log").exists()
-    assert (agg_dir / "ppl2_hyframework.log").exists()
-    assert (agg_dir / "ppl2_hycommon_1.log").exists()
+
+    # 最终只剩一个文件夹：日志打平成 <部署名>_<文件名>，manifest 与来源清单一并落在里面
     assert (agg_dir / "ppl2_hycommon.log").read_text(encoding="utf-8") == "one"
+    assert (agg_dir / "ppl2_hyframework.log").exists()
     assert (agg_dir / "ppl2_hycommon_1.log").read_text(encoding="utf-8") == "three"
-    # 汇总清单：记录每个文件的来源
+    manifest = json.loads((agg_dir / "pods_manifest.json").read_text(encoding="utf-8"))
+    assert len(manifest["pods"]) == 2
     copy_log = (agg_dir / "_copy_log.txt").read_text(encoding="utf-8")
     assert "ppl2_hycommon.log" in copy_log
     assert "成功: 3 | 失败: 0" in copy_log
+
+    # 中间目录树与压缩包都不该留下
+    assert not collect_base.exists()
+    assert list(out_base.rglob("*.zip")) == []
+    assert sorted(p.name for p in out_base.iterdir()) == ["logs_collected"]

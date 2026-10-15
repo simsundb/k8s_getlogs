@@ -38,7 +38,7 @@ def test_hosts_from_config_skips_broken_password_b64():
 
 def test_default_config_has_output_dir():
     assert default_config() == {
-        "hosts": [], "output_dir": "", "aggregate_after_collect": True,
+        "hosts": [], "output_dir": "",
     }
 
 
@@ -46,7 +46,7 @@ def test_load_config_missing_file_returns_default(tmp_path, monkeypatch):
     import src.config as cfg
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "missing.json")
     assert load_config() == {
-        "hosts": [], "output_dir": "", "aggregate_after_collect": True,
+        "hosts": [], "output_dir": "",
     }
 
 
@@ -87,7 +87,7 @@ def test_load_config_invalid_json_returns_default(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
     assert load_config() == {
-        "hosts": [], "output_dir": "", "aggregate_after_collect": True,
+        "hosts": [], "output_dir": "",
     }
 
 

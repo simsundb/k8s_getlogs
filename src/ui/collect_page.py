@@ -7,12 +7,12 @@ from threading import Event
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import (QBrush, QColor, QStandardItem,
                            QStandardItemModel)
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGroupBox,
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QProgressBar, QPushButton,
                                QVBoxLayout, QWidget)
 
-from ..collector import Collector, aggregate_logs, write_manifest, zip_output
+from ..collector import Collector, finish_collection
 from ..config import load_config, save_config, software_dir
 from ..k8s_client import PATTERN_MAP, build_log_pattern, get_pods_meta
 from ..models import DEFAULT_LOG_DIR, CollectSummary, CollectTask, human_size
@@ -78,16 +78,16 @@ class _CollectWorker(QThread):
     error = Signal(str)
 
     def __init__(self, tasks, metas, output_base, namespace, ssh_provider,
-                 aggregate_dir=None, parent=None):
+                 dest_dir=None, parent=None):
         super().__init__(parent)
         self.tasks = tasks
         self.metas = metas
         self.output_base = output_base
         self.namespace = namespace
         self.ssh_provider = ssh_provider
-        self.aggregate_dir = aggregate_dir
-        self.aggregate = None       # aggregate_logs 结果 dict，成功时不为空
-        self.aggregate_error = ""   # 汇总失败原因
+        self.dest_dir = dest_dir    # logs_collected/<日期>，采集收尾的最终落点
+        self.aggregate = None       # finish_collection 结果 dict，成功时不为空
+        self.aggregate_error = ""   # 收尾失败原因
         self.cancel = Event()
 
     def cancel_request(self):
@@ -98,9 +98,11 @@ class _CollectWorker(QThread):
             collector = Collector(self.ssh_provider, self.output_base, max_workers=4)
             results = collector.run(self.tasks, on_progress=self.progress.emit, cancel=self.cancel)
             summary = CollectSummary.build(results)
-            if self.aggregate_dir is not None:
+            if self.dest_dir is not None:
                 try:
-                    self.aggregate = aggregate_logs(self.output_base, self.aggregate_dir)
+                    self.aggregate = finish_collection(
+                        self.output_base, self.dest_dir, self.namespace,
+                        self.metas, results)
                 except Exception as e:
                     log.exception("汇总日志失败")
                     self.aggregate_error = str(e)
@@ -151,12 +153,12 @@ class CollectPage(QWidget):
         root.addLayout(src_row)
 
         agg_row = QHBoxLayout()
-        self.aggregate_cb = QCheckBox("采集后汇总日志到存储目录")
-        self.aggregate_cb.setChecked(cfg.get("aggregate_after_collect", True))
-        self.aggregate_cb.setToolTip(
-            "采集完成后把所有 .log 复制到存储目录下 logs_collected/<日期>/\n"
+        agg_label = QLabel("采集结果直接落到存储目录下的 logs_collected/<日期>/（不打压缩包）")
+        agg_label.setToolTip(
+            "采集完成后所有 .log 汇总复制到 logs_collected/<日期>/，并附 "
+            "pods_manifest.json 与 _copy_log.txt；中间的日期目录树随后清理\n"
             f"当前存储目录: {self.out_dir}")
-        agg_row.addWidget(self.aggregate_cb)
+        agg_row.addWidget(agg_label)
         agg_row.addStretch(1)
         root.addLayout(agg_row)
 
@@ -203,7 +205,7 @@ class CollectPage(QWidget):
         self.start_btn = QPushButton("开始采集")
         self.start_btn.setProperty("primary", True)
         set_icon(self.start_btn, "download", color="white")
-        self.start_btn.setToolTip("并发拉取所选 Pod 的日志并打包")
+        self.start_btn.setToolTip("并发拉取所选 Pod 的日志并汇总到 logs_collected/<日期>/")
         self.cancel_btn = QPushButton("取消")
         set_icon(self.cancel_btn, "x")
         self.cancel_btn.setEnabled(False)
@@ -226,7 +228,6 @@ class CollectPage(QWidget):
         self.choose_btn.clicked.connect(self._choose_dir)
         self.start_btn.clicked.connect(self.start_collect)
         self.cancel_btn.clicked.connect(self._cancel)
-        self.aggregate_cb.toggled.connect(self._on_aggregate_toggled)
         self.deploy_combo.itemsToggled.connect(self._on_deploy_toggled)
         self.search_edit.textChanged.connect(lambda _t: self._update_visibility())
         self.select_all_btn.clicked.connect(self._on_select_all)
@@ -246,12 +247,6 @@ class CollectPage(QWidget):
             data["output_dir"] = str(self.out_dir)
             save_config(data)
             self._update_out_label()
-
-    def _on_aggregate_toggled(self, checked: bool):
-        data = load_config()
-        if bool(data.get("aggregate_after_collect", True)) != bool(checked):
-            data["aggregate_after_collect"] = bool(checked)
-            save_config(data)
 
     def _load_pods(self):
         ns = self.selector.ns_combo.currentText()
@@ -396,22 +391,17 @@ class CollectPage(QWidget):
             f"开始采集：{len(tasks)} 个 Pod，类别={category}，"
             f"日志目录={log_dir}，日志名={name}，存储={self.out_dir}")
 
-        # 快照主机/命名空间/类别，采集过程中用户切换界面选择不影响本批任务：
-        # 工厂由线程池调用，绝不能跨线程访问 Qt 控件，故闭包只捕获 HostConfig 快照。
-        self._ns = ns
-        self._category = category
-
-        # 采集完成后的汇总目标目录（存储目录/logs_collected/<日期>），仅勾选时启用
-        self._aggregate_dir = None
-        if self.aggregate_cb.isChecked():
-            self._aggregate_dir = self.out_dir / "logs_collected" / self._date
+        # 快照采集收尾的最终落点：存储目录/logs_collected/<日期>/（不再打 zip）。
+        # 命名空间/任务在 start 时刻就作为构造参数交给工作线程，采集期间用户切换
+        # 界面选择不影响本批任务（工厂由线程池调用，绝不能跨线程访问 Qt 控件）。
+        self._dest_dir = self.out_dir / "logs_collected" / self._date
 
         def _factory():
             return SSHClient(host.ip, host.port, host.username, host.password).connect()
 
         self._worker = _CollectWorker(
             tasks, self.metas, self.out_dir / self._date, ns, _factory,
-            aggregate_dir=self._aggregate_dir, parent=self)
+            dest_dir=self._dest_dir, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.error.connect(self._on_worker_error)
@@ -429,27 +419,23 @@ class CollectPage(QWidget):
     def _on_finished(self, results, metas, summary):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        # 使用开始采集时的快照，避免采集期间用户切换命名空间/类别导致 manifest 与压缩包命名漂移
-        ns = self._ns
-        category = self._category
-        manifest_path = self.out_dir / self._date / "pods_manifest.json"
-        write_manifest(manifest_path, ns, metas, results)
-        zip_path = zip_output(self.out_dir, self._date, ns, category)
+        # manifest 写进汇总目录、中间日期目录树清理，都在工作线程的收尾里完成（见 finish_collection）
         self.log_panel.append_log(
             f"汇总：共 {summary.total} 个 Pod，成功 {summary.ok}，"
             f"失败 {summary.failed}，跳过 {summary.skipped}，"
             f"日志总大小 {human_size(summary.total_bytes)}")
-        self.log_panel.append_log(f"压缩包：{zip_path}")
-        # 汇总到软件目录的结果（工作线程已复制完成，这里只读结果 + 记日志）
+        # 汇总结果就是最终产物（工作线程已汇总 + 写 manifest + 清理中间目录，这里只读结果 + 记日志）
         worker = self._worker
         if worker is not None and worker.aggregate:
             agg = worker.aggregate
             self.log_panel.append_log(
-                f"已汇总 {agg['files']} 个 .log 到：{agg['dest_dir']}"
+                f"采集结果：{agg['files']} 个 .log 已汇总到 {agg['dest_dir']}"
                 + (f"（{agg['errors']} 个失败）" if agg["errors"] else ""))
+            self.log_panel.append_log(
+                "目录内附 pods_manifest.json（Pod 摘要）与 _copy_log.txt（来源清单）")
         elif worker is not None and worker.aggregate_error:
             self.log_panel.append_log(
-                f"[错误] 汇总失败：{worker.aggregate_error}（已跳过）")
+                f"[错误] 汇总失败：{worker.aggregate_error}（中间目录已保留，未清理）")
         self._worker = None
 
     def _cancel(self):

@@ -1,9 +1,8 @@
-"""并发采集器：任务队列 + 线程池 + 输出布局 + manifest + zip + 汇总。"""
+"""并发采集器：任务队列 + 线程池 + 输出布局 + manifest + 汇总。"""
 import json
 import logging
 import shutil
 import tarfile
-import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -58,28 +57,6 @@ def write_manifest(
         "pods": pods,
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def zip_output(
-    output_base: Path,
-    date_dir_name: str,
-    namespace: str,
-    category: str,
-) -> Path:
-    """把 <output_base>/<date_dir_name> 打成 <output_base>/<date>-<ns>-<category>.zip。
-
-    strict_timestamps=False：源文件时间戳早于 1980（ZIP 不支持的区间）时钳到 1980
-    而不是抛 ValueError。容器时钟不准、日志来自异常时间戳时，采集结果不该因为
-    打包这一步整个崩掉。
-    """
-    source = output_base / date_dir_name
-    target = output_base / f"{date_dir_name}-{namespace}-{category}.zip"
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED,
-                         strict_timestamps=False) as zf:
-        for path in sorted(source.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(output_base))
-    return target
 
 
 def prefix_pod_logs(target_dir: Path, deploy_name: str) -> None:
@@ -143,6 +120,35 @@ def aggregate_logs(source_dir: Path, dest_dir: Path) -> dict:
             "\n".join(log_lines) + "\n", encoding="utf-8")
     except OSError:
         pass
+    return stats
+
+
+def finish_collection(
+    collect_base: Path,
+    dest_dir: Path,
+    namespace: str,
+    metas: list[PodMeta],
+    results: list[CollectResult],
+) -> dict:
+    """采集收尾：汇总日志 → 写 manifest → 删掉中间目录树。
+
+    最终只留一个文件夹（`logs_collected/<日期>/`），不再打 zip —— 打包这一步
+    除了多一个文件没有任何好处，收件方也不一定装了解压软件。
+
+    - 汇总：把 <日期>/<命名空间>/<部署名>/<Pod>/ 下的 *.log 打平成
+      <部署名>_<原文件名> 复制到 dest_dir（见 aggregate_logs）
+    - manifest：pods_manifest.json 直接写进 dest_dir。原来放在日期目录里，
+      而日期目录随后会被删掉，所以必须先落盘到汇总目录
+    - 清理：删掉中间目录树 collect_base（各 Pod 分目录 + 已搬走的 manifest）
+
+    返回 aggregate_logs 的统计 dict，供 UI 显示汇总文件数/大小。
+    """
+    stats = aggregate_logs(collect_base, dest_dir)
+    write_manifest(dest_dir / "pods_manifest.json", namespace, metas, results)
+    # 兜底：万一 dest_dir 落在 collect_base 里面（自定义日期名等异常配置），
+    # 宁可留下中间目录也不能把刚汇总好的结果删掉
+    if collect_base not in dest_dir.parents:
+        shutil.rmtree(collect_base, ignore_errors=True)
     return stats
 
 

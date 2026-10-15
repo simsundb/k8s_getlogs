@@ -94,19 +94,60 @@ def test_collect_page_default_storage_dir_is_software_dir(app, monkeypatch, tmp_
         page.deleteLater()
 
 
-def test_collect_page_aggregate_checkbox_default_checked(app, monkeypatch, tmp_path):
-    """②页汇总开关默认勾选，取消勾选后持久化到 config.json。"""
+def test_collect_page_has_no_aggregate_checkbox(app, monkeypatch, tmp_path):
+    """②页汇总不再是可选项：结果一律落 logs_collected/<日期>/，故开关已移除。"""
     monkeypatch.setattr("src.config.CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr("src.config.APP_DIR", tmp_path)
     from src.ui.collect_page import CollectPage
     page = CollectPage(lambda: [])
     try:
-        assert page.aggregate_cb.isChecked() is True
-        page.aggregate_cb.setChecked(False)
-        from src.config import load_config
-        assert load_config()["aggregate_after_collect"] is False
+        assert not hasattr(page, "aggregate_cb")
     finally:
         page.deleteLater()
+
+
+def test_collect_worker_leaves_only_logs_collected(app, monkeypatch, tmp_path):
+    """工作线程收尾接线：采集结果只落 logs_collected/<日期>/，中间目录树清掉、不产 zip。"""
+    import tarfile
+
+    from src.models import CollectTask, PodMeta
+    from src.ui.collect_page import _CollectWorker
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "hycommon.log").write_text("one", encoding="utf-8")
+
+    class FakeSSH:
+        def exec_stdout(self, command, timeout=60):
+            return 0, "__TAR_OK__\n", ""
+
+        def stream_to_file(self, command, filepath, timeout=600):
+            with tarfile.open(filepath, "w:gz") as tf:
+                for p in sorted(remote.rglob("*")):
+                    if p.is_file():
+                        tf.add(p, arcname=p.relative_to(remote))
+            return 0
+
+        def close(self):
+            pass
+
+    out_dir = tmp_path / "output"
+    collect_base = out_dir / "2026-10-15"
+    dest = out_dir / "logs_collected" / "2026-10-15"
+    task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns",
+                       pattern="*.log")
+    metas = [PodMeta(name="podX", namespace="ns", deploy_name="app")]
+
+    worker = _CollectWorker([task], metas, collect_base, "ns",
+                            lambda: FakeSSH(), dest_dir=dest)
+    worker.start()
+    assert worker.wait(20000)
+
+    assert worker.aggregate["files"] == 1
+    assert (dest / "app_hycommon.log").read_text(encoding="utf-8") == "one"
+    assert (dest / "pods_manifest.json").exists()
+    assert not collect_base.exists()
+    assert list(out_dir.rglob("*.zip")) == []
 
 
 def test_log_panel_uses_fixed_pitch_font(app, monkeypatch, tmp_path):

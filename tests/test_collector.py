@@ -1,13 +1,11 @@
 import json
-import os
 import sys
 import tarfile
-import zipfile
 from pathlib import Path
 from threading import Event
 
 from src.collector import (Collector, aggregate_logs, extract_tar,
-                           prefix_pod_logs, write_manifest, zip_output)
+                           finish_collection, prefix_pod_logs, write_manifest)
 from src.config import software_dir
 from src.models import DEFAULT_LOG_DIR, CollectResult, CollectTask, PodMeta
 
@@ -146,35 +144,60 @@ def test_collector_without_tar_no_matching_logs_skipped(tmp_path):
     assert results[0].error == "无匹配日志"
 
 
-def test_no_tar_collect_then_zip_succeeds(tmp_path):
-    """回归：无 tar 采集出的日志时间戳若早于 1980，zip 会 ValueError 崩掉整个程序。"""
-    src = _make_source(tmp_path, {"hycommon.log": "one"})
-    out_base = tmp_path / "output"
-    collector = Collector(lambda: _NoTarSSH(src), out_base, max_workers=1)
+def test_no_tar_collect_finish_leaves_only_logs_collected(tmp_path):
+    """回归：无 tar 采集 → 收尾后只剩 logs_collected/<日期>/，且不产生任何 zip。"""
+    date = "2026-10-15"
+    collect_base = tmp_path / date
+    src = _make_source(tmp_path, {"hycommon.log": "one", "other.log": "two"})
     task = CollectTask(pod_name="podX", deploy_name="app", namespace="ns", pattern="*.log")
-    results = collector.run([task], cancel=Event())
+    metas = [PodMeta(name="podX", namespace="ns", deploy_name="app")]
+    results = Collector(lambda: _NoTarSSH(src), collect_base, max_workers=1).run(
+        [task], cancel=Event())
     assert results[0].ok is True
 
-    pod_log = out_base / "ns" / "app" / "podX" / "app_hycommon.log"
-    assert pod_log.stat().st_mtime >= 315532800      # 1980-01-01 UTC
+    dest = tmp_path / "logs_collected" / date
+    stats = finish_collection(collect_base, dest, "ns", metas, results)
 
-    z = zip_output(out_base, "ns", "ns", "ALL")
-    with zipfile.ZipFile(z) as zf:
-        assert zf.getinfo("ns/app/podX/app_hycommon.log").date_time[0] >= 1980
+    assert stats["files"] == 2
+    assert (dest / "app_hycommon.log").read_text(encoding="utf-8") == "one"
+    assert (dest / "app_other.log").read_text(encoding="utf-8") == "two"
+    assert (dest / "_copy_log.txt").exists()
+    assert not collect_base.exists()            # 中间目录树已清理
+    assert list(tmp_path.rglob("*.zip")) == []  # 不再打包
 
 
-def test_zip_output_clamps_pre_1980_timestamps(tmp_path):
-    """源文件时间戳异常（早于 1980）时钳到 1980 出包，而不是抛异常中断采集。"""
-    base = tmp_path / "output"
-    pod_dir = base / "2026-08-08" / "ns1"
+def test_finish_collection_manifest_lands_in_logs_collected(tmp_path):
+    """manifest 原先写在日期目录里，那个目录随后被删，必须落在汇总目录才留得住。"""
+    collect_base = tmp_path / "2026-10-15"
+    pod_dir = collect_base / "ns" / "app" / "podX"
     pod_dir.mkdir(parents=True)
-    old = pod_dir / "old.log"
-    old.write_text("x", encoding="utf-8")
-    os.utime(old, (0, 0))
+    (pod_dir / "app_a.log").write_text("x", encoding="utf-8")
+    dest = tmp_path / "logs_collected" / "2026-10-15"
+    metas = [PodMeta(name="podX", namespace="ns", deploy_name="app",
+                     full_json={"spec": {"containers": []}})]
+    results = [CollectResult(pod_name="podX", ok=True, file_count=1, total_bytes=1)]
 
-    z = zip_output(base, "2026-08-08", "ns1", "ALL")
-    with zipfile.ZipFile(z) as zf:
-        assert zf.getinfo("2026-08-08/ns1/old.log").date_time[0] == 1980
+    finish_collection(collect_base, dest, "ns", metas, results)
+
+    data = json.loads((dest / "pods_manifest.json").read_text(encoding="utf-8"))
+    assert data["namespace"] == "ns"
+    assert data["pods"][0]["collected"] is True
+    assert data["pods"][0]["fileCount"] == 1
+    assert not collect_base.exists()
+
+
+def test_finish_collection_keeps_base_when_dest_sits_inside_it(tmp_path):
+    """兜底：dest 万一落在中间目录里，宁可留着中间目录也不能删掉刚汇总的结果。"""
+    collect_base = tmp_path / "2026-10-15"
+    pod_dir = collect_base / "ns" / "app" / "podX"
+    pod_dir.mkdir(parents=True)
+    (pod_dir / "app_a.log").write_text("x", encoding="utf-8")
+    dest = collect_base / "logs_collected"        # 异常配置：汇总目录在中间目录内部
+
+    finish_collection(collect_base, dest, "ns", [], [])
+
+    assert (dest / "app_a.log").exists()
+    assert collect_base.exists()
 
 
 def test_extract_tar(tmp_path):
@@ -299,18 +322,6 @@ def test_write_manifest(tmp_path):
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["namespace"] == "ns1"
     assert data["pods"][0]["deployName"] == "app"
-
-
-def test_zip_output_contains_manifest(tmp_path):
-    base = tmp_path / "output"
-    date_dir = base / "2026-08-08"
-    date_dir.mkdir(parents=True)
-    (date_dir / "manifest.json").write_text("{}", encoding="utf-8")
-    z = zip_output(base, "2026-08-08", "ns1", "hycommon")
-    assert z.exists()
-    with zipfile.ZipFile(z) as zf:
-        names = zf.namelist()
-        assert any(n.endswith("manifest.json") for n in names)
 
 
 def _make_pod_tree(root: Path, pods: dict) -> Path:
